@@ -1,0 +1,35 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { withBase } from '../lib/urls';
+
+const routes = [
+  { href: '/history/', label: 'История' },
+  { href: '/mythology/', label: 'Мифология' },
+  { href: '/material/', label: 'Материал' },
+  { href: '/medicine/', label: 'Медицина' },
+];
+---
+
+<BaseLayout title="Страница не найдена" description="Запрошенная страница проекта YU не найдена.">
+  <section class="not-found page-shell">
+    <div class="not-found__mark" aria-hidden="true">玉</div>
+    <div>
+      <p class="eyebrow">Ошибка 404</p>
+      <h1 class="display">Этот след обрывается</h1>
+      <p class="lede">Камень остался, а адрес изменился или никогда не существовал. Вернитесь к началу либо выберите новый маршрут.</p>
+      <a class="button" href={withBase('/')}>На главную</a>
+    </div>
+    <nav aria-label="Основные разделы"><p>Продолжить исследование</p>{routes.map((route) => <a href={withBase(route.href)}>{route.label}<span aria-hidden="true">↗</span></a>)}</nav>
+  </section>
+</BaseLayout>
+
+<style>
+  .not-found { display: grid; min-height: 90vh; padding-top: 10rem; padding-bottom: 5rem; grid-template-columns: .35fr 1fr .55fr; gap: clamp(2rem,6vw,6rem); align-items: center; }
+  .not-found__mark { color: rgba(143,203,165,.18); font-family: var(--serif); font-size: clamp(8rem,18vw,18rem); line-height: 1; }
+  .not-found .display { max-width: 9ch; }
+  .not-found nav { display: flex; flex-direction: column; border-top: 1px solid var(--line); }
+  .not-found nav p { color: rgba(220,232,223,.45); font-size: .67rem; letter-spacing: .09em; text-transform: uppercase; }
+  .not-found nav a { display: flex; padding: .8rem 0; justify-content: space-between; border-bottom: 1px solid var(--line); color: var(--mist); text-decoration: none; }
+  .not-found nav a span { color: var(--jade); }
+  @media (max-width: 800px) { .not-found { grid-template-columns: 1fr; } .not-found__mark { position: absolute; z-index: -1; opacity: .5; } }
+</style>
