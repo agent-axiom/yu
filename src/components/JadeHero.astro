@@ -1,0 +1,54 @@
+---
+import { withBase } from '../lib/urls';
+---
+
+<jade-hero class="hero">
+  <img
+    class="hero__image"
+    src={withBase('/images/hero-jade.webp')}
+    alt="Необработанная зелёная глыба нефрита в низком свете"
+    width="1774"
+    height="887"
+    fetchpriority="high"
+  />
+  <div class="hero__veil" aria-hidden="true"></div>
+  <div class="hero__light" aria-hidden="true"></div>
+  <div class="hero__content page-shell">
+    <p class="hero__kicker"><span>玉</span> yù · jade · нефрит</p>
+    <h1>Камень,<br />который стал<br /><em>идеей</em></h1>
+    <p class="hero__intro">От неолитических погребений до современных роллеров — исследуем, где заканчивается минерал и начинается культурная память.</p>
+    <div class="hero__actions">
+      <a class="button" href="#routes">Начать исследование <span aria-hidden="true">↓</span></a>
+      <a class="hero__source-link" href={withBase('/sources/')}>Как мы проверяем факты</a>
+    </div>
+  </div>
+  <p class="hero__axis" aria-hidden="true">история · миф · материя · свидетельство</p>
+</jade-hero>
+
+<script>
+  import { bindHeroPointer } from '../lib/hero';
+
+  document.querySelectorAll<HTMLElement>('jade-hero').forEach((root) => {
+    bindHeroPointer(root, matchMedia('(prefers-reduced-motion: reduce)').matches);
+  });
+</script>
+
+<style>
+  .hero { --pointer-x: 68%; --pointer-y: 40%; position: relative; display: grid; min-height: 100svh; overflow: hidden; align-items: end; isolation: isolate; }
+  .hero__image, .hero__veil, .hero__light { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .hero__image { z-index: -3; object-fit: cover; object-position: 58% 50%; scale: 1.02; animation: breathe 12s ease-in-out infinite alternate; }
+  .hero__veil { z-index: -2; background: linear-gradient(90deg, rgba(7,17,15,.98) 0%, rgba(7,17,15,.73) 40%, rgba(7,17,15,.12) 76%), linear-gradient(0deg, var(--ink) 0%, transparent 28%), linear-gradient(180deg, rgba(7,17,15,.68), transparent 26%); }
+  .hero__light { z-index: -1; pointer-events: none; mix-blend-mode: screen; opacity: .52; background: radial-gradient(circle 22rem at var(--pointer-x) var(--pointer-y), rgba(164,230,187,.25), transparent 70%); transition: background-position .12s linear; }
+  .hero__content { padding-top: 9rem; padding-bottom: clamp(5rem, 10vh, 8rem); }
+  .hero__kicker { display: flex; gap: .8rem; align-items: center; margin: 0 0 clamp(2rem,5vh,4rem); color: var(--jade); font-size: .75rem; font-weight: 700; letter-spacing: .24em; text-transform: uppercase; }
+  .hero__kicker span { font-family: var(--serif); font-size: 1.8rem; font-weight: 400; }
+  h1 { max-width: 10ch; margin: 0; color: var(--paper); font-family: var(--serif); font-size: clamp(3.6rem, 8.8vw, 9.3rem); font-weight: 400; line-height: .86; letter-spacing: -.055em; text-wrap: balance; }
+  h1 em { color: var(--jade); font-weight: inherit; }
+  .hero__intro { max-width: 38rem; margin: clamp(2rem,4vw,3.5rem) 0 0; color: rgba(220,232,223,.76); font-size: clamp(1rem,1.2vw,1.2rem); }
+  .hero__actions { display: flex; flex-wrap: wrap; gap: 1.5rem; align-items: center; margin-top: 2.2rem; }
+  .hero__source-link { color: rgba(220,232,223,.7); font-size: .78rem; font-weight: 600; letter-spacing: .08em; }
+  .hero__axis { position: absolute; right: 1.2rem; bottom: 5rem; margin: 0; color: rgba(220,232,223,.35); font-size: .62rem; letter-spacing: .2em; text-transform: uppercase; transform: rotate(-90deg) translateX(100%); transform-origin: right bottom; }
+  @keyframes breathe { from { scale: 1.02; } to { scale: 1.055; } }
+  @media (max-width: 700px) { .hero { min-height: 53rem; } .hero__image { object-position: 66% 50%; } .hero__veil { background: linear-gradient(90deg, rgba(7,17,15,.94), rgba(7,17,15,.48)), linear-gradient(0deg, var(--ink) 0%, transparent 42%); } .hero__axis { display: none; } }
+  @media (prefers-reduced-motion: reduce) { .hero__image { animation: none; } }
+</style>

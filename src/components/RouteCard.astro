@@ -1,0 +1,33 @@
+---
+import { withBase } from '../lib/urls';
+
+interface Props {
+  number: string;
+  href: string;
+  title: string;
+  description: string;
+  accent: string;
+}
+const { number, href, title, description, accent } = Astro.props;
+---
+
+<a class="route-card" href={withBase(href)} style={`--card-accent:${accent}`}>
+  <span class="route-card__number">{number}</span>
+  <div>
+    <h3>{title}</h3>
+    <p>{description}</p>
+  </div>
+  <span class="route-card__arrow" aria-hidden="true">↗</span>
+</a>
+
+<style>
+  .route-card { position: relative; display: grid; min-height: 24rem; padding: 1.6rem; grid-template-rows: auto 1fr auto; overflow: hidden; color: var(--mist); background: var(--ink); text-decoration: none; transition: color .35s, background .5s var(--ease-out); }
+  .route-card::before { position: absolute; inset: auto -15% -35% 10%; height: 70%; content: ''; opacity: .25; background: radial-gradient(circle, var(--card-accent), transparent 65%); filter: blur(1rem); transform: translateY(30%); transition: opacity .5s, transform .6s var(--ease-out); }
+  .route-card:hover { color: var(--paper); background: #0b1c18; }
+  .route-card:hover::before { opacity: .55; transform: none; }
+  .route-card__number { color: var(--jade); font-family: var(--serif); font-size: .9rem; }
+  .route-card div { position: relative; align-self: end; }
+  h3 { margin: 0; color: var(--paper); font-family: var(--serif); font-size: var(--step-2); font-weight: 400; }
+  p { max-width: 30ch; margin: .9rem 0 0; color: rgba(220,232,223,.62); font-size: .85rem; line-height: 1.55; }
+  .route-card__arrow { justify-self: end; color: var(--jade); font-size: 1.5rem; }
+</style>

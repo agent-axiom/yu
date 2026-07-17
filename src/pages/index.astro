@@ -1,0 +1,124 @@
+---
+import { getCollection } from 'astro:content';
+import JadeHero from '../components/JadeHero.astro';
+import RouteCard from '../components/RouteCard.astro';
+import SourceRef from '../components/SourceRef.astro';
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { evidenceLabel } from '../lib/content';
+import { withBase } from '../lib/urls';
+
+const [eras, myths, materials, medicine, sources] = await Promise.all([
+  getCollection('eras'),
+  getCollection('myths'),
+  getCollection('materials'),
+  getCollection('medicine'),
+  getCollection('sources'),
+]);
+const orderedEras = eras.sort((a, b) => a.data.order - b.data.order);
+const sourceMap = new Map(sources.map((entry) => [entry.id, entry.data]));
+const gia = sourceMap.get('gia-jade-2026');
+const featuredMyth = myths.find(({ id }) => id === '04-maya-breath') ?? myths[0];
+const firstMedical = medicine.find(({ id }) => id === '01-healing-energy') ?? medicine[0];
+---
+
+<BaseLayout title="Живой нефрит" description="История, мифология, минералогия и медицина нефрита — от древнейших культур до современных доказательств.">
+  <JadeHero />
+
+  <section class="section page-shell definition reveal" aria-labelledby="definition-title">
+    <p class="eyebrow">Сначала — точность</p>
+    <div class="editorial-grid">
+      <h2 id="definition-title" class="title">Один древний образ. Два разных материала.</h2>
+      <div>
+        <p class="lede">Слово «jade» объединяет нефрит и жадеит. Они похожи на взгляд, но различаются химией и кристаллической структурой — а культурная история обоих гораздо шире привычного зелёного цвета.{gia && <SourceRef source={gia} />}</p>
+        <a class="button button--ghost" href={withBase('/material/')}>Увидеть различия</a>
+      </div>
+    </div>
+  </section>
+
+  <section id="routes" class="section page-shell section-rule" aria-labelledby="routes-title">
+    <p class="eyebrow">Четыре маршрута</p>
+    <h2 id="routes-title" class="title reveal">Выберите глубину погружения</h2>
+    <div class="card-grid route-grid reveal">
+      <RouteCard number="01" href="/history/" title="История" description="От Хуншань и Лянчжу до глобального музейного мира." accent="#8fcba5" />
+      <RouteCard number="02" href="/mythology/" title="Мифология" description="Легенда, культурный контекст и то, что можно подтвердить." accent="#d5a866" />
+      <RouteCard number="03" href="/material/" title="Материя" description="Нефрит и жадеит под минералогической линзой." accent="#87aab5" />
+      <RouteCard number="04" href="/medicine/" title="Медицина" description="Традиционные обещания и реальный уровень доказательств." accent="#c98173" />
+    </div>
+  </section>
+
+  <section class="section history-preview section-rule">
+    <div class="page-shell">
+      <div class="preview-head reveal">
+        <div><p class="eyebrow">Более пяти тысяч лет</p><h2 class="title">Линия времени не прямая</h2></div>
+        <p class="lede">Нефрит многократно менял роль: инструмент статуса, посредник в ритуале, нравственная метафора, имперский материал и глобальный товар.</p>
+      </div>
+      <ol class="era-ribbon reveal">
+        {orderedEras.slice(0, 4).map((era, index) => <li><span>0{index + 1}</span><p>{era.data.date}</p><h3>{era.data.title}</h3><small>{era.data.place}</small></li>)}
+      </ol>
+      <a class="button" href={withBase('/history/')}>Открыть всю хронологию <span aria-hidden="true">→</span></a>
+    </div>
+  </section>
+
+  <section class="myth-preview section" aria-labelledby="myth-title">
+    <img src={withBase('/images/mythic-jade.webp')} alt="Поэтическая иллюстрация круглого камня над водой в тумане" width="1672" height="941" loading="lazy" />
+    <div class="myth-preview__veil" aria-hidden="true"></div>
+    <div class="page-shell myth-preview__content reveal">
+      <p class="eyebrow">{featuredMyth.data.culture}</p>
+      <h2 id="myth-title" class="display">{featuredMyth.data.title}</h2>
+      <p class="lede">{featuredMyth.data.legend}</p>
+      <a class="button" href={withBase('/mythology/')}>Разобрать миф по слоям</a>
+    </div>
+  </section>
+
+  <section class="section page-shell material-preview section-rule" aria-labelledby="matter-title">
+    <div class="material-preview__image reveal"><img src={withBase('/images/jade-macro.webp')} alt="Генеративная макроиллюстрация волокнистой структуры зелёного нефрита" width="1536" height="1024" loading="lazy" /><span>не диагностическое изображение</span></div>
+    <div class="reveal"><p class="eyebrow">Материя</p><h2 id="matter-title" class="title">Прочность рождается из структуры</h2><p class="lede">{materials.find(({ id }) => id === 'nephrite')?.data.structure}. Именно переплетение волокон помогает нефриту выдерживать удар.</p><a class="button button--ghost" href={withBase('/material/')}>Открыть минералогическую линзу</a></div>
+  </section>
+
+  <section class="section page-shell evidence-preview section-rule" aria-labelledby="evidence-title">
+    <div class="evidence-preview__label"><span aria-hidden="true">!</span><p>Медицинская<br />проверка</p></div>
+    <div class="reveal">
+      <p class="eyebrow">{evidenceLabel(firstMedical.data.evidence)}</p>
+      <h2 id="evidence-title" class="title">Культурная ценность — не клиническое доказательство</h2>
+      <p class="lede">Исследования массажа и гуа-ша не подтверждают «целительную энергию» минерала. Мы отдельно показываем традицию, наблюдаемый эффект, ограничения и риски.</p>
+      <a class="button" href={withBase('/medicine/')}>Проверить утверждения</a>
+    </div>
+  </section>
+
+  <aside class="method-callout page-shell reveal">
+    <p class="eyebrow">Как читать YU</p>
+    <p>Каждое ключевое утверждение связано с источником. Легенда остаётся легендой, интерпретация — интерпретацией, а медицинская гипотеза получает явный уровень доказательности.</p>
+    <a href={withBase('/sources/')}>Открыть 23 источника и методологию <span aria-hidden="true">↗</span></a>
+  </aside>
+</BaseLayout>
+
+<style>
+  .definition { background: radial-gradient(circle at 18% 45%, rgba(143,203,165,.08), transparent 25rem); }
+  .route-grid { margin-top: 3rem; grid-template-columns: repeat(4, minmax(0,1fr)); }
+  .history-preview { background: linear-gradient(180deg, var(--ink), #0a201a 50%, var(--ink)); }
+  .preview-head { display: grid; margin-bottom: 4rem; grid-template-columns: 1.2fr .8fr; gap: 4rem; }
+  .era-ribbon { display: grid; margin: 0 0 3rem; padding: 0; grid-template-columns: repeat(4,1fr); list-style: none; border-top: 1px solid var(--line); }
+  .era-ribbon li { position: relative; min-height: 14rem; padding: 2rem 1.3rem; border-right: 1px solid var(--line); }
+  .era-ribbon li::before { position: absolute; top: -.33rem; left: 1.3rem; width: .65rem; height: .65rem; border-radius: 50%; content: ''; background: var(--jade); box-shadow: 0 0 1rem var(--jade); }
+  .era-ribbon span { color: var(--jade); font-size: .7rem; }
+  .era-ribbon p, .era-ribbon small { color: rgba(220,232,223,.55); font-size: .72rem; }
+  .era-ribbon h3 { color: var(--paper); font-family: var(--serif); font-size: 1.2rem; font-weight: 400; }
+  .myth-preview { position: relative; display: grid; min-height: 48rem; align-items: center; overflow: hidden; }
+  .myth-preview > img, .myth-preview__veil { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .myth-preview__veil { background: linear-gradient(90deg, rgba(7,17,15,.94), rgba(7,17,15,.18)), linear-gradient(0deg, var(--ink), transparent 30%); }
+  .myth-preview__content { position: relative; width: var(--page); }
+  .myth-preview .display { max-width: 10ch; }
+  .myth-preview .lede { max-width: 43rem; }
+  .material-preview { display: grid; grid-template-columns: 1fr 1fr; gap: clamp(2rem,8vw,8rem); align-items: center; }
+  .material-preview__image { position: relative; }
+  .material-preview__image img { aspect-ratio: 4/5; width: 100%; object-fit: cover; }
+  .material-preview__image span { position: absolute; right: 1rem; bottom: 1rem; padding: .3rem .5rem; color: var(--ink); background: rgba(238,232,217,.82); font-size: .6rem; letter-spacing: .08em; text-transform: uppercase; }
+  .evidence-preview { display: grid; grid-template-columns: .35fr 1fr; gap: clamp(2rem,8vw,8rem); }
+  .evidence-preview__label { display: flex; gap: 1rem; color: var(--amber); font-size: .75rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+  .evidence-preview__label span { display: grid; width: 3rem; height: 3rem; place-items: center; border: 1px solid var(--amber); border-radius: 50%; font-family: var(--serif); font-size: 1.5rem; }
+  .method-callout { display: grid; margin-bottom: 6rem; padding: clamp(2rem,5vw,4rem); grid-template-columns: .35fr 1fr auto; gap: 2rem; align-items: start; border: 1px solid var(--line); background: rgba(18,58,48,.24); }
+  .method-callout p { margin: 0; }
+  .method-callout > a { color: var(--jade); font-size: .8rem; font-weight: 700; }
+  @media (max-width: 1000px) { .route-grid { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 700px) { .route-grid, .preview-head, .era-ribbon, .material-preview, .evidence-preview, .method-callout { grid-template-columns: 1fr; } .era-ribbon li { min-height: auto; border-bottom: 1px solid var(--line); } .myth-preview { min-height: 43rem; } }
+</style>
