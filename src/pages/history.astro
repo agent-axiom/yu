@@ -1,0 +1,80 @@
+---
+import { getCollection } from 'astro:content';
+import HistoryTimeline from '../components/HistoryTimeline.astro';
+import SourceRef from '../components/SourceRef.astro';
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { withBase } from '../lib/urls';
+
+const [eras, sources] = await Promise.all([getCollection('eras'), getCollection('sources')]);
+const orderedEras = eras.sort((a, b) => a.data.order - b.data.order);
+const sourceMap = new Map(sources.map((entry) => [entry.id, entry.data]));
+const metBi = sourceMap.get('met-bi-2026');
+const metMaya = sourceMap.get('met-maya-2026');
+---
+
+<BaseLayout title="История нефрита" description="Интерактивная история нефрита и жадеита от неолитических культур Китая и Мезоамерики до современности.">
+  <header class="page-hero page-shell">
+    <p class="eyebrow">История · 5000+ лет</p>
+    <h1 class="display">Камень как мера времени</h1>
+    <p class="lede">Археология показывает предметы, технологии и контекст находки. Значение приходится реконструировать осторожнее: даже там, где ритуальная роль вероятна, точный смысл формы мог меняться и остаётся предметом дискуссии.</p>
+  </header>
+
+  <section class="section page-shell section-rule" aria-labelledby="timeline-title">
+    <div class="timeline-intro reveal"><div><p class="eyebrow">Хронология</p><h2 id="timeline-title" class="title">Восемь поворотных эпох</h2></div><p>Выберите точку на шкале. В каждой панели факты отделены от интерпретации, а маркеры открывают точные публикации.</p></div>
+    <HistoryTimeline eras={orderedEras} sources={sources} />
+  </section>
+
+  <section class="section artifacts" aria-labelledby="objects-title">
+    <div class="page-shell"><p class="eyebrow">Два континента</p><h2 id="objects-title" class="title">Форма хранит разные истории</h2></div>
+    <div class="artifact-grid page-shell reveal">
+      <figure>
+        <div class="artifact-image"><img src={withBase('/images/artifacts/liangzhu-bi.webp')} alt="Светлый нефритовый диск би культуры Лянчжу" width="1200" height="901" loading="lazy" /></div>
+        <figcaption><span>Китай · III тыс. до н. э.</span><h3>Диск bi</h3><p>Такие диски находят в погребениях элиты. Их размещение у тела указывает на ритуальную роль, но не даёт единственного, полностью доказанного толкования символа.{metBi && <SourceRef source={metBi} />}</p></figcaption>
+      </figure>
+      <figure>
+        <div class="artifact-image artifact-image--green"><img src={withBase('/images/artifacts/maya-jade-ornament.webp')} alt="Зелёное жадеитовое украшение майя с волнистым краем" width="1200" height="639" loading="lazy" /></div>
+        <figcaption><span>Майя · 400–900 н. э.</span><h3>Украшение-раковина</h3><p>Жадеит связывали с водой, ростом маиса, дыханием и долговечностью. Это не «тот же миф», что в Китае, а самостоятельная мезоамериканская система значений.{metMaya && <SourceRef source={metMaya} />}</p></figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="section page-shell meanings section-rule" aria-labelledby="meanings-title">
+    <div><p class="eyebrow">Как менялся смысл</p><h2 id="meanings-title" class="title">От редкого материала — к нравственной метафоре</h2></div>
+    <ol>
+      <li><span>01</span><div><h3>Труд</h3><p>Твёрдый камень требовал долгого пиления, шлифовки и полировки абразивами. Трудоёмкость делала предмет видимым знаком ресурсов и мастерства.</p></div></li>
+      <li><span>02</span><div><h3>Ритуал</h3><p>Контекст погребений и приношений показывает социальную и церемониальную роль — но археологический предмет не сообщает нам автоматически точный текст веры.</p></div></li>
+      <li><span>03</span><div><h3>Добродетель</h3><p>В китайской письменной традиции качества нефрита стали языком разговора о человеческом характере, чистоте и правлении.</p></div></li>
+      <li><span>04</span><div><h3>Глобальный рынок</h3><p>Современное слово jade соединяет разные минералы, места добычи, национальные наследия, коллекционирование и коммерческие обещания.</p></div></li>
+    </ol>
+  </section>
+
+  <aside class="history-note page-shell reveal"><p><strong>Редакционная оговорка:</strong> древняя датировка и контекст предмета могут быть хорошо подтверждены, а его «значение» — оставаться гипотезой. На YU эти уровни не смешиваются.</p><a href={withBase('/sources/')}>Методология источников ↗</a></aside>
+</BaseLayout>
+
+<style>
+  .page-hero { padding-top: clamp(10rem,20vh,15rem); padding-bottom: clamp(5rem,10vw,9rem); }
+  .page-hero .display { max-width: 12ch; }
+  .timeline-intro { display: grid; margin-bottom: 3rem; grid-template-columns: 1fr .7fr; gap: 4rem; }
+  .timeline-intro > p { max-width: 50ch; color: rgba(220,232,223,.65); }
+  .artifacts { background: var(--paper); color: var(--ink); }
+  .artifacts .eyebrow { color: var(--jade-deep); }
+  .artifacts .title { color: var(--ink); }
+  .artifact-grid { display: grid; margin-top: 3rem; grid-template-columns: 1fr 1fr; gap: 1px; background: rgba(7,17,15,.2); }
+  figure { margin: 0; background: #e6dfcf; }
+  .artifact-image { display: grid; min-height: 30rem; padding: 3rem; place-items: center; background: #d8d8d6; }
+  .artifact-image--green { background: #d3d6d1; }
+  .artifact-image img { width: 100%; max-height: 28rem; object-fit: contain; mix-blend-mode: multiply; }
+  figcaption { padding: clamp(1.5rem,4vw,3.5rem); }
+  figcaption > span { color: #416458; font-size: .68rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+  figcaption h3 { margin: .8rem 0; font-family: var(--serif); font-size: var(--step-2); font-weight: 400; }
+  figcaption p { max-width: 55ch; }
+  .meanings { display: grid; grid-template-columns: .8fr 1.2fr; gap: clamp(3rem,8vw,8rem); }
+  .meanings ol { margin: 0; padding: 0; list-style: none; }
+  .meanings li { display: grid; padding: 1.4rem 0; grid-template-columns: 4rem 1fr; border-top: 1px solid var(--line); }
+  .meanings li span { color: var(--jade); font-family: var(--serif); }
+  .meanings h3 { margin: 0; color: var(--paper); font-family: var(--serif); font-size: 1.4rem; font-weight: 400; }
+  .meanings p { margin: .5rem 0 0; color: rgba(220,232,223,.62); }
+  .history-note { display: flex; margin-bottom: 6rem; padding: 2rem; gap: 2rem; justify-content: space-between; border-left: 3px solid var(--amber); background: rgba(213,168,102,.08); }
+  .history-note p { max-width: 70ch; margin: 0; }
+  @media (max-width: 760px) { .timeline-intro, .artifact-grid, .meanings { grid-template-columns: 1fr; } .artifact-image { min-height: 20rem; padding: 1rem; } .history-note { flex-direction: column; } }
+</style>
