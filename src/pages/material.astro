@@ -1,0 +1,50 @@
+---
+import { getCollection } from 'astro:content';
+import MaterialLens from '../components/MaterialLens.astro';
+import SourceRef from '../components/SourceRef.astro';
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { withBase } from '../lib/urls';
+
+const [materials, sources] = await Promise.all([getCollection('materials'), getCollection('sources')]);
+const sourceMap = new Map(sources.map((entry) => [entry.id, entry.data]));
+const gia = sourceMap.get('gia-jade-2026');
+const feng = sourceMap.get('feng-nephrite-2017');
+---
+
+<BaseLayout title="Нефрит и жадеит" description="Интерактивное минералогическое сравнение нефрита и жадеита: химия, структура, твёрдость, вязкость и диагностика.">
+  <header class="material-hero page-shell">
+    <div><p class="eyebrow">Материя · минералогия</p><h1 class="display">Jade — это не один камень</h1><p class="lede">Нефрит и жадеит объединены историческим именем и выдающейся прочностью. Но микроскопически один похож на спутанный войлок, другой — на плотно собранную мозаику.</p></div>
+    <div class="formula" aria-label="Химические формулы"><p><span>Нефрит</span>Ca₂(Mg,Fe)₅Si₈O₂₂(OH)₂</p><p><span>Жадеит</span>NaAlSi₂O₆</p></div>
+  </header>
+
+  <section class="section page-shell section-rule" aria-labelledby="lens-title">
+    <div class="lens-head"><div><p class="eyebrow">Интерактивная линза</p><h2 id="lens-title" class="title">Структура решает</h2></div><p>Цвет может обмануть. Устойчивость к сколу рождается не просто из твёрдости, а из того, как кристаллы сцеплены друг с другом.{gia && <SourceRef source={gia} />}</p></div>
+    <MaterialLens materials={materials} />
+  </section>
+
+  <section class="section diagnosis" aria-labelledby="diagnosis-title">
+    <div class="page-shell diagnosis__grid">
+      <img src={withBase('/images/jade-macro.webp')} alt="Генеративная макроиллюстрация зелёной волокнистой минеральной поверхности" width="1536" height="1024" loading="lazy" />
+      <div><p class="eyebrow">Подлинность</p><h2 id="diagnosis-title" class="title">Глаз видит цвет. Лаборатория — структуру.</h2><p class="lede">Имитации, окрашивание и разные зелёные минералы делают фотографическую диагностику ненадёжной. Геммологи используют совокупность наблюдений и инструментальных методов — от оптики до спектроскопии.</p><ul><li>показатель преломления и плотность;</li><li>микроскопия структуры и включений;</li><li>спектры Raman, FTIR и другие методы по задаче.{feng && <SourceRef source={feng} />}</li></ul><p class="warning">Не покупайте дорогой объект только по цвету или словам продавца: независимый лабораторный отчёт важнее «домашнего теста».</p></div>
+    </div>
+  </section>
+</BaseLayout>
+
+<style>
+  .material-hero { display: grid; padding-top: clamp(11rem,20vh,16rem); padding-bottom: 7rem; grid-template-columns: 1.25fr .75fr; gap: 5rem; align-items: end; }
+  .material-hero .display { max-width: 11ch; }
+  .formula { border-left: 1px solid var(--line); padding-left: 2rem; }
+  .formula p { color: var(--paper); font-family: var(--serif); font-size: clamp(1rem,2vw,1.5rem); overflow-wrap: anywhere; }
+  .formula span { display: block; margin-bottom: .4rem; color: var(--jade); font-family: var(--sans); font-size: .68rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+  .lens-head { display: grid; margin-bottom: 3rem; grid-template-columns: 1fr .7fr; gap: 5rem; }
+  .lens-head > p { color: rgba(220,232,223,.66); }
+  .diagnosis { background: var(--paper); color: var(--ink); }
+  .diagnosis__grid { display: grid; grid-template-columns: .85fr 1.15fr; gap: clamp(2rem,8vw,8rem); align-items: center; }
+  .diagnosis img { width: 100%; aspect-ratio: 4/5; object-fit: cover; }
+  .diagnosis .eyebrow { color: var(--jade-deep); }
+  .diagnosis .title { color: var(--ink); }
+  .diagnosis .lede { color: rgba(7,17,15,.72); }
+  .diagnosis li { margin: .6rem 0; }
+  .warning { margin-top: 2rem; padding: 1.2rem; border-left: 3px solid #9b6d2d; background: rgba(213,168,102,.18); }
+  @media (max-width: 760px) { .material-hero, .lens-head, .diagnosis__grid { grid-template-columns: 1fr; } .material-hero { gap: 2rem; } .formula { border-left: 0; border-top: 1px solid var(--line); padding: 1rem 0 0; } }
+</style>

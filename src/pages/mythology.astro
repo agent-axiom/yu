@@ -1,0 +1,49 @@
+---
+import { getCollection } from 'astro:content';
+import MythExplorer from '../components/MythExplorer.astro';
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { withBase } from '../lib/urls';
+
+const [myths, sources] = await Promise.all([getCollection('myths'), getCollection('sources')]);
+const orderedMyths = myths.sort((a, b) => a.id.localeCompare(b.id));
+---
+
+<BaseLayout title="Мифология нефрита" description="Легенды и культурные представления о нефрите в Китае, у майя и маори — с отделением мифа от подтверждённых данных.">
+  <header class="myth-hero">
+    <img src={withBase('/images/mythic-jade.webp')} alt="Поэтическая иллюстрация круглого нефритового образа над водой и туманным ландшафтом" width="1672" height="941" />
+    <div aria-hidden="true"></div>
+    <div class="page-shell"><p class="eyebrow">Мифология · три слоя</p><h1 class="display">Камень, который научился говорить</h1><p class="lede">Миф не ошибка в справочнике. Это язык, которым сообщества связывают материал с честностью, предками, ландшафтом, дыханием и смертью.</p></div>
+  </header>
+
+  <section class="section page-shell layer-key" aria-labelledby="key-title">
+    <div><p class="eyebrow">Как читать</p><h2 id="key-title" class="title">Не разрушать историю. Не выдавать её за факт.</h2></div>
+    <ol>
+      <li><span>01</span><div><strong>Легенда</strong><p>Сюжет в аккуратном пересказе.</p></div></li>
+      <li><span>02</span><div><strong>Культурный контекст</strong><p>Почему он был понятен и важен.</p></div></li>
+      <li><span>03</span><div><strong>Что подтверждено</strong><p>Предметы, тексты и границы знания.</p></div></li>
+    </ol>
+  </section>
+
+  <section class="section page-shell section-rule" aria-label="Мифологические сюжеты">
+    <MythExplorer myths={orderedMyths} sources={sources} />
+  </section>
+
+  <aside class="comparison-note page-shell reveal"><p class="eyebrow">Важно</p><p>Похожие мотивы — вечность, чистота, жизнь — не доказывают общего происхождения мифов. Китайский yù, мезоамериканский жадеит и маорийский pounamu принадлежат разным языкам, территориям и историческим отношениям.</p></aside>
+</BaseLayout>
+
+<style>
+  .myth-hero { position: relative; display: grid; min-height: 48rem; align-items: end; overflow: hidden; }
+  .myth-hero > img, .myth-hero > div:first-of-type { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .myth-hero > div:first-of-type { background: linear-gradient(90deg, rgba(7,17,15,.92), rgba(7,17,15,.15)), linear-gradient(0deg,var(--ink),transparent 35%); }
+  .myth-hero .page-shell { position: relative; padding-bottom: 6rem; }
+  .myth-hero .display { max-width: 11ch; }
+  .layer-key { display: grid; grid-template-columns: 1fr 1fr; gap: 6rem; }
+  .layer-key ol { margin: 0; padding: 0; list-style: none; }
+  .layer-key li { display: grid; padding: 1rem 0; grid-template-columns: 3rem 1fr; border-top: 1px solid var(--line); }
+  .layer-key span { color: var(--jade); font-family: var(--serif); }
+  .layer-key strong { color: var(--paper); }
+  .layer-key p { margin: .2rem 0; color: rgba(220,232,223,.55); }
+  .comparison-note { margin-bottom: 6rem; padding: clamp(2rem,5vw,4rem); border: 1px solid var(--line); background: rgba(18,58,48,.25); }
+  .comparison-note > p:last-child { max-width: 75ch; margin: 0; font-family: var(--serif); font-size: var(--step-1); }
+  @media (max-width: 760px) { .layer-key { grid-template-columns: 1fr; gap: 2rem; } }
+</style>

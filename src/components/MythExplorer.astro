@@ -1,0 +1,109 @@
+---
+import type { CollectionEntry } from 'astro:content';
+import { mythLayerLabel, type MythLayer } from '../lib/explorers';
+import SourceRef from './SourceRef.astro';
+
+interface Props {
+  myths: CollectionEntry<'myths'>[];
+  sources: CollectionEntry<'sources'>[];
+}
+
+const { myths, sources } = Astro.props;
+const sourceMap = new Map(sources.map((source) => [source.id, source.data]));
+const layers: MythLayer[] = ['legend', 'context', 'confirmed'];
+---
+
+<myth-explorer class="myths">
+  {myths.map((myth, mythIndex) => (
+    <article class="myth" data-myth-card>
+      <header>
+        <p><span>0{mythIndex + 1}</span> {myth.data.culture}</p>
+        <h2>{myth.data.title}</h2>
+      </header>
+      <div class="myth__tabs" role="tablist" aria-label={`Слои сюжета: ${myth.data.title}`}>
+        {layers.map((layer, index) => (
+          <button
+            type="button"
+            role="tab"
+            id={`${myth.id}-${layer}-tab`}
+            aria-controls={`${myth.id}-${layer}-panel`}
+            aria-selected={index === 0 ? 'true' : 'false'}
+            tabindex={index === 0 ? 0 : -1}
+            data-layer-tab={layer}
+          >{mythLayerLabel(layer)}</button>
+        ))}
+      </div>
+      <div class="myth__layers">
+        {layers.map((layer) => (
+          <section
+            id={`${myth.id}-${layer}-panel`}
+            role="tabpanel"
+            aria-labelledby={`${myth.id}-${layer}-tab`}
+            data-layer-panel={layer}
+          >
+            <h3>{mythLayerLabel(layer)}</h3>
+            <p>{myth.data[layer]}</p>
+          </section>
+        ))}
+      </div>
+      <footer>
+        <span>Проверить источники</span>
+        {myth.data.citations.map((id, index) => {
+          const source = sourceMap.get(id);
+          return source && <SourceRef source={source} marker={index + 1} />;
+        })}
+      </footer>
+    </article>
+  ))}
+</myth-explorer>
+
+<script>
+  class MythExplorer extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll<HTMLElement>('[data-myth-card]').forEach((card) => {
+        const tabs = [...card.querySelectorAll<HTMLButtonElement>('[data-layer-tab]')];
+        const panels = [...card.querySelectorAll<HTMLElement>('[data-layer-panel]')];
+        if (!tabs.length || tabs.length !== panels.length) return;
+        card.setAttribute('data-enhanced', '');
+        const select = (index: number) => {
+          tabs.forEach((tab, tabIndex) => {
+            const selected = index === tabIndex;
+            tab.setAttribute('aria-selected', String(selected));
+            tab.tabIndex = selected ? 0 : -1;
+            panels[tabIndex].hidden = !selected;
+          });
+        };
+        tabs.forEach((tab, index) => {
+          tab.addEventListener('click', () => select(index));
+          tab.addEventListener('keydown', (event) => {
+            if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+            event.preventDefault();
+            const next = (index + (event.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length;
+            select(next);
+            tabs[next].focus();
+          });
+        });
+        select(0);
+      });
+    }
+  }
+  customElements.define('myth-explorer', MythExplorer);
+</script>
+
+<style>
+  .myths { display: grid; gap: 1px; background: var(--line); border: 1px solid var(--line); }
+  .myth { display: grid; padding: clamp(1.5rem,4vw,4rem); grid-template-columns: .65fr 1.35fr; gap: clamp(2rem,6vw,6rem); background: var(--ink); }
+  .myth header p { color: var(--jade); font-size: .68rem; font-weight: 700; letter-spacing: .11em; text-transform: uppercase; }
+  .myth header p span { margin-right: 1rem; font-family: var(--serif); font-size: 1.2rem; }
+  .myth h2 { max-width: 12ch; margin: 1.5rem 0 0; color: var(--paper); font-family: var(--serif); font-size: var(--step-2); font-weight: 400; line-height: 1.15; }
+  .myth__tabs { grid-column: 2; display: flex; border-bottom: 1px solid var(--line); }
+  .myth__tabs button { flex: 1; padding: 1rem .6rem; border: 0; color: rgba(220,232,223,.5); background: transparent; cursor: pointer; font-size: .7rem; font-weight: 700; letter-spacing: .05em; }
+  .myth__tabs button[aria-selected='true'] { color: var(--jade-bright); box-shadow: inset 0 -2px var(--jade); }
+  .myth__layers { grid-column: 2; min-height: 12rem; }
+  .myth[data-enhanced] [data-layer-panel][hidden] { display: none; }
+  .myth__layers section { padding: 1rem 0; }
+  .myth__layers h3 { color: var(--jade); font-size: .7rem; letter-spacing: .1em; text-transform: uppercase; }
+  .myth__layers p { max-width: 65ch; margin: 0; color: rgba(220,232,223,.76); font-family: var(--serif); font-size: var(--step-1); line-height: 1.7; }
+  .myth footer { grid-column: 2; display: flex; align-items: center; gap: .4rem; color: rgba(220,232,223,.45); font-size: .66rem; letter-spacing: .08em; text-transform: uppercase; }
+  @media (max-width: 760px) { .myth { grid-template-columns: 1fr; gap: 1.5rem; } .myth__tabs, .myth__layers, .myth footer { grid-column: 1; } .myth__tabs { overflow-x: auto; } .myth__tabs button { min-width: 9rem; } }
+</style>
