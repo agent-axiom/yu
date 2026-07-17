@@ -1,0 +1,15 @@
+---
+import { withBase } from '../lib/urls';
+---
+
+<footer class="site-footer">
+  <div>
+    <p class="site-footer__mark" aria-hidden="true">玉</p>
+    <p><strong>YU — живой нефрит</strong><br />Культурная история камня без смешения знания и легенды.</p>
+  </div>
+  <div class="site-footer__meta">
+    <p>Историко-просветительский проект</p>
+    <a href={withBase('/sources/')}>Редакционная политика и источники</a>
+    <p>© {new Date().getFullYear()}</p>
+  </div>
+</footer>

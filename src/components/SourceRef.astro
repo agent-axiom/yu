@@ -1,0 +1,31 @@
+---
+interface SourceData {
+  title: string;
+  authors: string[];
+  year: number;
+  publisher: string;
+  url: string;
+  kind: string;
+}
+
+interface Props {
+  source: SourceData;
+  marker?: number | string;
+}
+
+const { source, marker = '↗' } = Astro.props;
+---
+
+<details class="source-ref">
+  <summary aria-label={`Источник: ${source.title}`}>
+    <span aria-hidden="true">{marker}</span>
+    <span>Источник</span>
+  </summary>
+  <div class="source-ref__card">
+    <p class="source-ref__kind">{source.kind}</p>
+    <p><strong>{source.title}</strong></p>
+    <p>{source.authors.join(', ')}</p>
+    <p>{source.publisher}, {source.year}</p>
+    <a href={source.url} target="_blank" rel="noreferrer">Открыть публикацию <span aria-hidden="true">↗</span></a>
+  </div>
+</details>

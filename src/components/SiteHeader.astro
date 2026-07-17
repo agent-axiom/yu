@@ -1,0 +1,50 @@
+---
+import { withBase } from '../lib/urls';
+
+const items = [
+  { href: '/', label: 'Главная' },
+  { href: '/history/', label: 'История' },
+  { href: '/mythology/', label: 'Мифология' },
+  { href: '/material/', label: 'Материал' },
+  { href: '/medicine/', label: 'Медицина' },
+  { href: '/sources/', label: 'Источники' },
+];
+const currentPath = Astro.url.pathname;
+---
+
+<site-navigation class="site-nav">
+  <a class="brand" href={withBase('/')} aria-label="YU — на главную">
+    <span class="brand__mark" aria-hidden="true">玉</span>
+    <span class="brand__name">YU</span>
+    <span class="brand__descriptor">живой нефрит</span>
+  </a>
+  <button class="site-nav__toggle" type="button" aria-expanded="false" aria-controls="primary-navigation">
+    <span>Меню</span>
+    <span class="site-nav__toggle-mark" aria-hidden="true"></span>
+  </button>
+  <nav id="primary-navigation" class="site-nav__links" aria-label="Основная навигация">
+    {items.map((item) => {
+      const href = withBase(item.href);
+      const active = item.href === '/'
+        ? currentPath === href || currentPath === `${href}/`
+        : currentPath.startsWith(href);
+      return <a href={withBase(item.href)} aria-current={active ? 'page' : undefined}>{item.label}</a>;
+    })}
+  </nav>
+</site-navigation>
+
+<script>
+  class SiteNavigation extends HTMLElement {
+    connectedCallback() {
+      const button = this.querySelector<HTMLButtonElement>('.site-nav__toggle');
+      const links = this.querySelector<HTMLElement>('.site-nav__links');
+      if (!button || !links) return;
+      button.addEventListener('click', () => {
+        const expanded = button.getAttribute('aria-expanded') === 'true';
+        button.setAttribute('aria-expanded', String(!expanded));
+        links.toggleAttribute('data-open', !expanded);
+      });
+    }
+  }
+  customElements.define('site-navigation', SiteNavigation);
+</script>
