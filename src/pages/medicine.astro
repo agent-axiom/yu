@@ -1,0 +1,60 @@
+---
+import { getCollection } from 'astro:content';
+import EvidencePanel from '../components/EvidencePanel.astro';
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { withBase } from '../lib/urls';
+
+const [medicineRecords, sources] = await Promise.all([getCollection('medicine'), getCollection('sources')]);
+const medicine = medicineRecords.sort((a, b) => a.id.localeCompare(b.id));
+---
+
+<BaseLayout title="Нефрит и медицина" description="Доказательная проверка лечебных утверждений о нефрите, роллерах и гуа-ша: исследования, ограничения и безопасность.">
+  <header class="medicine-hero page-shell">
+    <p class="eyebrow">Медицина · проверка обещаний</p>
+    <h1 class="display">Что делает камень — и что делает массаж?</h1>
+    <p class="lede">Культурная традиция заслуживает уважения. Медицинское утверждение — отдельной проверки. Мы не переносим результат механической процедуры на «энергию» минерала.</p>
+  </header>
+
+  <aside class="safety-notice page-shell" aria-label="Важное медицинское предупреждение">
+    <span aria-hidden="true">!</span>
+    <div><strong>Сначала безопасность</strong><p>Этот информационный материал не заменяет диагностику, консультацию квалифицированного врача и не заменяет назначенное лечение. При выраженных или сохраняющихся симптомах обратитесь за медицинской помощью.</p></div>
+  </aside>
+
+  <section class="section page-shell section-rule evidence-key" aria-labelledby="levels-title">
+    <div><p class="eyebrow">Шкала чтения</p><h2 id="levels-title" class="title">Уровень — не оценка культуры</h2></div>
+    <ul>
+      <li><span class="key-dot key-dot--tradition"></span><strong>Традиционное представление</strong><p>Зафиксированная практика или вера; не доказательство эффекта.</p></li>
+      <li><span class="key-dot key-dot--lab"></span><strong>Лабораторное наблюдение</strong><p>Механизм или измерение вне полноценного клинического вывода.</p></li>
+      <li><span class="key-dot key-dot--clinical"></span><strong>Клинические данные</strong><p>Исследования на людях; качество и ограничения показаны отдельно.</p></li>
+      <li><span class="key-dot key-dot--none"></span><strong>Доказательств нет</strong><p>Надёжных данных для заявленного эффекта не найдено.</p></li>
+    </ul>
+  </section>
+
+  <section class="section page-shell claims section-rule" aria-label="Разбор медицинских утверждений">
+    {medicine.map((record, index) => <EvidencePanel record={record} sources={sources} index={index} />)}
+  </section>
+
+  <section class="section page-shell limits section-rule" aria-labelledby="limits-title">
+    <div><p class="eyebrow">Короткий вывод</p><h2 id="limits-title" class="title">Осторожный эффект процедуры не равен силе камня</h2></div>
+    <div><p class="lede">Небольшие исследования допускают кратковременные изменения кровотока или отдельных параметров после массажа. Они не доказывают долговременное омоложение, лечение болезней или уникальное действие нефрита.</p><p>Если вам приятен прохладный гладкий инструмент, воспринимайте его как предмет ухода, соблюдайте гигиену и умеренное давление. Для диагноза и лечения выбирайте квалифицированного специалиста, а не обещание продавца.</p><a class="button button--ghost" href={withBase('/sources/')}>Открыть медицинские публикации</a></div>
+  </section>
+</BaseLayout>
+
+<style>
+  .medicine-hero { padding-top: clamp(11rem,20vh,16rem); padding-bottom: 6rem; }
+  .medicine-hero .display { max-width: 13ch; }
+  .safety-notice { display: grid; padding: clamp(1.5rem,4vw,3rem); grid-template-columns: 4rem 1fr; gap: 1.5rem; border: 1px solid rgba(213,168,102,.45); background: rgba(213,168,102,.08); }
+  .safety-notice > span { display: grid; width: 3.2rem; height: 3.2rem; place-items: center; border: 1px solid var(--amber); border-radius: 50%; color: var(--amber); font-family: var(--serif); font-size: 1.5rem; }
+  .safety-notice strong { color: var(--paper); font-size: 1.1rem; }
+  .safety-notice p { max-width: 75ch; margin: .5rem 0 0; color: rgba(220,232,223,.7); }
+  .evidence-key, .limits { display: grid; grid-template-columns: .75fr 1.25fr; gap: clamp(3rem,7vw,7rem); }
+  .evidence-key ul { display: grid; margin: 0; padding: 0; grid-template-columns: 1fr 1fr; gap: 1px; list-style: none; background: var(--line); }
+  .evidence-key li { position: relative; padding: 1.3rem; background: var(--ink); }
+  .evidence-key strong { display: block; padding-left: 1.4rem; color: var(--paper); font-size: .78rem; }
+  .evidence-key p { margin: .6rem 0 0; color: rgba(220,232,223,.52); font-size: .75rem; }
+  .key-dot { position: absolute; top: 1.65rem; width: .7rem; height: .7rem; border-radius: 50%; background: var(--amber); }
+  .key-dot--lab { background: #87aab5; } .key-dot--clinical { background: var(--jade); } .key-dot--none { background: var(--red); }
+  .claims { display: grid; gap: 1px; }
+  .limits > div:last-child > p:not(.lede) { color: rgba(220,232,223,.62); }
+  @media (max-width: 760px) { .evidence-key, .limits { grid-template-columns: 1fr; } .evidence-key ul { grid-template-columns: 1fr; } .safety-notice { grid-template-columns: 1fr; } }
+</style>

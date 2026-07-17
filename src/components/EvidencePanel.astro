@@ -1,0 +1,54 @@
+---
+import type { CollectionEntry } from 'astro:content';
+import { evidenceLabel } from '../lib/content';
+import SourceRef from './SourceRef.astro';
+
+interface Props {
+  record: CollectionEntry<'medicine'>;
+  sources: CollectionEntry<'sources'>[];
+  index: number;
+}
+
+const { record, sources, index } = Astro.props;
+const sourceMap = new Map(sources.map((source) => [source.id, source.data]));
+---
+
+<article class="evidence-panel" data-evidence={record.data.evidence}>
+  <header>
+    <span class="evidence-panel__index">0{index + 1}</span>
+    <div>
+      <p class="evidence-panel__badge">{evidenceLabel(record.data.evidence)}</p>
+      <h2>{record.data.title}</h2>
+    </div>
+  </header>
+  <div class="evidence-panel__body">
+    <section><h3>Традиция и обещание</h3><p>{record.data.tradition}</p></section>
+    <section><h3>Оценка данных</h3><p>{record.data.assessment}</p></section>
+    <p class="evidence-panel__safety"><strong>Безопасность:</strong> {record.data.safety}</p>
+  </div>
+  <footer>
+    <span>Исследования</span>
+    {record.data.citations.map((id, citationIndex) => {
+      const source = sourceMap.get(id);
+      return source && <SourceRef source={source} marker={citationIndex + 1} />;
+    })}
+  </footer>
+</article>
+
+<style>
+  .evidence-panel { --evidence-color: var(--amber); display: grid; padding: clamp(1.5rem,4vw,4rem); grid-template-columns: .72fr 1.28fr; gap: clamp(2rem,6vw,6rem); border: 1px solid var(--line); background: linear-gradient(140deg, rgba(18,58,48,.42), rgba(7,17,15,.9)); }
+  .evidence-panel[data-evidence='none'] { --evidence-color: var(--red); }
+  .evidence-panel[data-evidence='clinical'] { --evidence-color: #8fcba5; }
+  .evidence-panel[data-evidence='laboratory'] { --evidence-color: #87aab5; }
+  .evidence-panel header { display: grid; grid-template-columns: 3rem 1fr; gap: 1rem; }
+  .evidence-panel__index { color: var(--evidence-color); font-family: var(--serif); font-size: 1.3rem; }
+  .evidence-panel__badge { display: inline-flex; margin: 0 0 1.2rem; padding: .4rem .65rem; border: 1px solid var(--evidence-color); border-radius: 99rem; color: var(--evidence-color); font-size: .64rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
+  .evidence-panel h2 { margin: 0; color: var(--paper); font-family: var(--serif); font-size: var(--step-2); font-weight: 400; line-height: 1.16; }
+  .evidence-panel h3 { margin: 0 0 .55rem; color: var(--jade); font-size: .68rem; letter-spacing: .09em; text-transform: uppercase; }
+  .evidence-panel__body section { padding-bottom: 1.4rem; }
+  .evidence-panel__body section + section { padding-top: 1.4rem; border-top: 1px solid var(--line); }
+  .evidence-panel__body p { margin: 0; color: rgba(220,232,223,.72); }
+  .evidence-panel__safety { margin-top: 1.5rem !important; padding: 1rem 1.2rem; border-left: 3px solid var(--evidence-color); color: var(--mist) !important; background: rgba(213,168,102,.08); font-size: .85rem; }
+  .evidence-panel footer { grid-column: 2; display: flex; align-items: center; gap: .45rem; color: rgba(220,232,223,.45); font-size: .65rem; letter-spacing: .08em; text-transform: uppercase; }
+  @media (max-width: 760px) { .evidence-panel { grid-template-columns: 1fr; } .evidence-panel footer { grid-column: 1; } }
+</style>

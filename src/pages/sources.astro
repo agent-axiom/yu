@@ -1,0 +1,95 @@
+---
+import { getCollection } from 'astro:content';
+import BaseLayout from '../layouts/BaseLayout.astro';
+
+const sources = (await getCollection('sources')).sort((a, b) => b.data.year - a.data.year || a.data.title.localeCompare(b.data.title));
+const groups = [
+  { kind: 'paper', title: 'Рецензируемые статьи', note: 'Археология, минералогия и исследования на людях.' },
+  { kind: 'museum', title: 'Музейные коллекции', note: 'Карточки предметов, каталоги и кураторские исследования.' },
+  { kind: 'book', title: 'Книги и каталоги', note: 'Развёрнутый исторический и культурный контекст.' },
+  { kind: 'institution', title: 'Научные учреждения', note: 'Справочные материалы и клинические рекомендации.' },
+] as const;
+const regionLabel = { asia: 'Азиатская перспектива', west: 'Западная перспектива', global: 'Локальная / глобальная перспектива' };
+---
+
+<BaseLayout title="Источники и методология" description="Полная библиография YU: азиатские и западные исследования, музейные коллекции, медицинские публикации и редакционная политика.">
+  <header class="sources-hero page-shell">
+    <p class="eyebrow">Источники · методология</p>
+    <h1 class="display">Не список ссылок, а карта доверия</h1>
+    <p class="lede">Мы соединяем локальную экспертизу азиатских исследователей с международной археологией, минералогией, музейными каталогами и медицинскими обзорами — и показываем, где заканчивается каждый источник.</p>
+    <div class="source-stats"><p><strong>{sources.length}</strong><span>источника</span></p><p><strong>{sources.filter(({ data }) => data.region === 'asia').length}</strong><span>азиатских</span></p><p><strong>{sources.filter(({ data }) => data.kind === 'paper').length}</strong><span>статей</span></p><p><strong>100%</strong><span>с точной ссылкой</span></p></div>
+  </header>
+
+  <section class="section page-shell method section-rule" aria-labelledby="method-title">
+    <div><p class="eyebrow">Редакционная иерархия</p><h2 id="method-title" class="title">Утверждение получает источник своего типа</h2></div>
+    <ol>
+      <li><span>01</span><div><h3>Предмет и дата</h3><p>Археологическая публикация или музейная карточка с контекстом находки.</p></div></li>
+      <li><span>02</span><div><h3>Состав и структура</h3><p>Геммологическая организация или рецензируемая минералогия.</p></div></li>
+      <li><span>03</span><div><h3>Легенда и смысл</h3><p>Атрибутированный текст, кураторская интерпретация и оговорка о спорном.</p></div></li>
+      <li><span>04</span><div><h3>Здоровье</h3><p>Исследования на людях, систематические обзоры и медицинская безопасность.</p></div></li>
+    </ol>
+  </section>
+
+  <section class="section page-shell policies section-rule" aria-labelledby="policies-title">
+    <p class="eyebrow">Правила проекта</p><h2 id="policies-title" class="title">Что мы делаем при несогласии</h2>
+    <div class="policy-grid">
+      <article><span>Интерпретации</span><p>Не превращаем вероятный ритуальный смысл в установленный факт. Показываем контекст и формулируем границу уверенности.</p></article>
+      <article><span>Медицина</span><p>Не называем традицию лечением без клинических данных. Малое исследование описываем вместе с выборкой, контролем и ограничениями.</p></article>
+      <article><span>Региональный голос</span><p>Стараемся включать исследователей и учреждения культуры, о которой идёт речь, а не опираться только на западные пересказы.</p></article>
+      <article><span>Изображения</span><p>Музейные фотографии используются только при явной открытой лицензии. Генеративные сцены маркируются и не служат доказательством.</p></article>
+    </div>
+  </section>
+
+  <section class="section page-shell bibliography section-rule" aria-labelledby="bibliography-title">
+    <p class="eyebrow">Библиография</p><h2 id="bibliography-title" class="title">Все публикации</h2>
+    {groups.map((group) => {
+      const groupSources = sources.filter(({ data }) => data.kind === group.kind);
+      return groupSources.length > 0 && (
+        <section class="source-group" aria-labelledby={`group-${group.kind}`}>
+          <header><h3 id={`group-${group.kind}`}>{group.title}</h3><p>{group.note}</p><span>{groupSources.length.toString().padStart(2, '0')}</span></header>
+          <ol>{groupSources.map((source) => (
+            <li>
+              <div class="source-year">{source.data.year}</div>
+              <div><p class="source-region">{regionLabel[source.data.region]}</p><h4>{source.data.title}</h4><p>{source.data.authors.join(', ')}</p><p>{source.data.publisher}</p></div>
+              <div class="source-actions"><span>Обращение: {source.data.accessed}</span>{source.data.license && <span>{source.data.license}</span>}<a href={source.data.url} target="_blank" rel="noreferrer">Открыть ↗</a></div>
+            </li>
+          ))}</ol>
+        </section>
+      );
+    })}
+  </section>
+</BaseLayout>
+
+<style>
+  .sources-hero { padding-top: clamp(11rem,20vh,16rem); padding-bottom: 6rem; }
+  .sources-hero .display { max-width: 12ch; }
+  .source-stats { display: grid; margin-top: 4rem; grid-template-columns: repeat(4,1fr); border-block: 1px solid var(--line); }
+  .source-stats p { display: flex; margin: 0; padding: 1.5rem; flex-direction: column; border-right: 1px solid var(--line); }
+  .source-stats strong { color: var(--jade); font-family: var(--serif); font-size: var(--step-2); font-weight: 400; }
+  .source-stats span { color: rgba(220,232,223,.5); font-size: .68rem; letter-spacing: .08em; text-transform: uppercase; }
+  .method { display: grid; grid-template-columns: .75fr 1.25fr; gap: 6rem; }
+  .method ol { margin: 0; padding: 0; list-style: none; }
+  .method li { display: grid; padding: 1.2rem 0; grid-template-columns: 3rem 1fr; border-top: 1px solid var(--line); }
+  .method li > span { color: var(--jade); font-family: var(--serif); }
+  .method h3 { margin: 0; color: var(--paper); font-family: var(--serif); font-size: 1.25rem; font-weight: 400; }
+  .method li p { margin: .3rem 0 0; color: rgba(220,232,223,.55); }
+  .policy-grid { display: grid; margin-top: 3rem; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--line); }
+  .policy-grid article { min-height: 13rem; padding: 1.5rem; background: var(--ink); }
+  .policy-grid span { color: var(--jade); font-size: .68rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+  .policy-grid p { color: rgba(220,232,223,.65); }
+  .bibliography > .title { margin-bottom: 4rem; }
+  .source-group { margin-top: 4rem; }
+  .source-group > header { position: relative; display: grid; padding-bottom: 1.3rem; grid-template-columns: .6fr 1fr; border-bottom: 1px solid var(--line); }
+  .source-group > header h3 { margin: 0; color: var(--paper); font-family: var(--serif); font-size: var(--step-2); font-weight: 400; }
+  .source-group > header p { margin: 0; color: rgba(220,232,223,.5); }
+  .source-group > header > span { position: absolute; right: 0; color: var(--jade); font-family: var(--serif); font-size: 1.4rem; }
+  .source-group ol { margin: 0; padding: 0; list-style: none; }
+  .source-group li { display: grid; padding: 1.4rem 0; grid-template-columns: 5rem 1fr auto; gap: 1.5rem; border-bottom: 1px solid var(--line); }
+  .source-year { color: var(--jade); font-family: var(--serif); }
+  .source-region { color: var(--amber) !important; font-size: .62rem !important; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+  .source-group h4 { max-width: 55rem; margin: .2rem 0 .6rem; color: var(--paper); font-family: var(--serif); font-size: 1.12rem; font-weight: 400; }
+  .source-group li p { margin: .15rem 0; color: rgba(220,232,223,.5); font-size: .75rem; }
+  .source-actions { display: flex; min-width: 12rem; flex-direction: column; align-items: flex-end; gap: .3rem; color: rgba(220,232,223,.4); font-size: .65rem; }
+  .source-actions a { margin-top: .5rem; color: var(--jade); font-size: .75rem; font-weight: 700; }
+  @media (max-width: 760px) { .source-stats { grid-template-columns: 1fr 1fr; } .method, .policy-grid { grid-template-columns: 1fr; } .source-group > header { grid-template-columns: 1fr; padding-right: 3rem; } .source-group li { grid-template-columns: 3.5rem 1fr; } .source-actions { grid-column: 2; align-items: flex-start; } }
+</style>
