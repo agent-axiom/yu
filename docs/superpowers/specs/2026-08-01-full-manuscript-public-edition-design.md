@@ -31,8 +31,11 @@
 | Рабочие названия и композиция раннего outline | Заголовки и reading sequence текущего frozen manuscript |
 | Печатный PDF, цветопроба и EPUB как связанные этапы пилота | Не являются условиями готовности этого веб-выпуска и остаются отдельной будущей работой |
 | Человеческое reader testing из раннего плана | Не является gate этого выпуска; его заменяют утверждённый пользователем дизайн, независимые агентные review и автоматические browser-level проверки |
+| Manifest v3 / attestation v2 / `yu-public-release-v1` из hardening-дизайна 28 июля | Manifest v4 / attestation v3 / reader projection и новые digest domains, определённые ниже |
 
 Остальные принципы исходного дизайна сохраняются: одно каноническое ядро, научно-популярный тон, разделение свидетельства и интерпретации, медицинская осторожность, проверяемые права и существующая визуальная система `yu`.
+
+Hardening-контракт `yu-book/docs/superpowers/specs/2026-07-28-five-agent-review-hardening-design.md` наследуется полностью, если этот документ явно не задаёт замену. Сохраняются strict schemas, уникальные `agentRunId`, точный aggregate log, frozen/live verification, каноническая сериализация, length framing, staging revalidation, symlink/hardlink protection и rollback recovery. Явно заменяются только версии manifest/attestation, форма публичных records, cycle-scoped paths и правило бинарных assets: в reader-v1 их точные байты входят в payload digest и release binding, но это остаётся integrity binding и не означает review или подтверждение прав.
 
 ## Цели
 
@@ -74,7 +77,24 @@
 
 ### Новый пятиагентный цикл
 
-После редакционных изменений создаётся новый frozen commit и новый cycle ID `cycle-02`. Старый cycle-01, его отчёты и журнал остаются неизменяемым историческим свидетельством и не перезаписываются. Закрытие замечаний фиксируется в новом приватном resolution ledger `findingId → изменённые файлы/точные фрагменты → новое evidence → target SHA`; ledger входит во frozen evidence cycle-02.
+После редакционных изменений создаётся corpus target commit **`T`**. Он содержит исправленные `manuscript/**`, `research/**`, `rights/**`, исходные assets и все поля `publicProjection`, но не пытается содержать SHA самого себя в review ledger.
+
+Первая новая попытка имеет ID `cycle-02`. Если она находит новые ошибки, все её artifacts коммитятся как неизменяемое свидетельство неуспешной попытки. Исправления образуют новый target commit и новый монотонно возрастающий cycle ID; ни один прошлый цикл не перезаписывается. В остальном документе **`C`** обозначает ID финального успешного цикла, а **`T`** — его target commit.
+
+После `T` создаются cycle-scoped evidence files:
+
+```text
+editorial/agent-review-cycles/<C>/cycle.json
+editorial/agent-review-cycles/<C>/resolution-ledger.md
+editorial/agent-review-cycles/<C>/log.md
+editorial/agent-review-cycles/<C>/reader-preview/**
+editorial/agent-review-packets/<C>/<role>.md
+editorial/agent-reviews/<C>/<role>.md
+```
+
+Resolution ledger однозначно записывает `findingId → изменённые файлы/точные фрагменты → новое evidence → targetCommit: T`. Он создаётся только после `T`, поэтому self-reference нет. Generator получает явный путь `--cycle`; все output paths выводятся из cycle ID и не используют singleton для новых циклов.
+
+Существующие legacy-файлы cycle-01 `editorial/agent-review-cycle.json`, `editorial/agent-review-log.md`, пакеты и отчёты не перемещаются, не редактируются и не перегенерируются. Их байты остаются историческим свидетельством. Любой цикл начиная с cycle-02 пишет только в свои новые scoped paths.
 
 Пять независимых ролей повторно проверяют:
 
@@ -84,9 +104,19 @@
 - сравнительный метод и отсутствие ложной непрерывности;
 - согласованность решений и итоговый gate.
 
-Каждая роль получает уникальный `agentRunId`. Отчёты, агрегированный журнал и coverage должны точно соответствовать frozen commit. Публикация разрешается только при `publicationGate: agent-reviewed`.
+Каждая роль получает уникальный `agentRunId`. Cycle config, resolution ledger, пять review packets, пять reports, aggregate log и preview metadata содержат один и тот же exact `cycleId: C`, `targetCommit: T`, projection schema `reader-v1`, transformer version `reader-markdown-v1` и `readerPayloadDigest`. Любое несовпадение возвращает `blocked-agent-review`. Публикация разрешается только при `publicationGate: agent-reviewed`.
 
-Review packets включают детерминированный preview именно `reader-v1`: итоговый читательский Markdown после преобразования, публичные notes, паспорта, подписи и библиографические записи. Поэтому агенты проверяют не только приватные исходники, но и точную смысловую проекцию, которая затем будет связана manifest digest. Preview не коммитится в публичный репозиторий до прохождения gate.
+Review packets включают детерминированный preview точного reader payload: итоговый читательский Markdown после преобразования, публичные notes, паспорта, подписи, библиографические записи и точные бинарные assets. `readerPayloadDigest` вычисляется по versioned canonical framing всех preview payload paths/bytes. Поэтому агенты проверяют не только приватные исходники, но и точную проекцию, предназначенную к публикации.
+
+Когда пять отчётов и aggregate log дают `agent-reviewed`, все scoped artifacts цикла `C` коммитятся как неизменяемый review-evidence commit **`E`**. Обязательные инварианты: `E != T`, `E` является потомком `T`, а exact diff `T..E` содержит только шесть перечисленных выше cycle-scoped path families для `C`. Любые другие добавления, удаления или изменения блокируют выпуск; Git blob IDs всего остального tree, включая `assets/**`, schemas, transformer и release tooling, обязаны совпадать с `T`. Каждый artifact цикла `C` ссылается на `C`, `T` и один `readerPayloadDigest`. Manifest позже ссылается одновременно на `C`, `T` и `E`. Preview не попадает в публичный репозиторий до прохождения gate.
+
+Успешная apply-фаза финализатора фиксируется отдельным finalization commit **`F`**. Он обязан быть неравным `E` потомком, а exact diff `E..F` имеет закрытый allowlist:
+
+- только записи выбранного dependency closure под `manuscript/entries/**`, `research/claims/**`, `research/sources/**`, `research/objects/**` и `rights/media/**`;
+- в исходных байтах этих записей финализатор заменяет только точные скалярные токены `releaseStatus: private → public` и `reviewStatus: draft|fact-checked → approved`; все окружающие байты, включая Markdown body и остальные JSON/frontmatter fields, должны точно совпадать с `E`;
+- точная запись `release/public.json` manifest v4.
+
+Любое изменение prose, `publicProjection`, evidence, review artifacts, assets, schemas, transformer или tooling между `E` и `F` блокирует выпуск. Manifest не хранит SHA `F`, чтобы не создавать новую self-reference; `F` служит Git-свидетельством точной apply-фазы. Final exporter запускается только из чистого `F`, проверяет цепочку `T → E → F` и строит проекцию из побайтово неизменных читательских полей и assets снимка `T`.
 
 ## Архитектурная граница
 
@@ -131,11 +161,21 @@ public/images/book-release/
 
 **Object passport** содержит название, культуру, датировку, материал с квалификацией уровня уверенности, коллекцию, опубликованный инвентарный номер либо явное указание его отсутствия, provenance note, кредиты и связи с публичными источниками и медиа.
 
-**Media** содержит безопасное выходное имя, alt, подпись, кредит, лицензию, URL лицензии/коллекции и обязательный флаг недокументального генеративного изображения. Исходный приватный путь не публикуется.
+**Media** содержит безопасное выходное имя, alt, подпись, media kind, кредит, лицензию и безопасный публичный URL лицензии/коллекции. Для `generative` обязателен флаг недокументального изображения, для `authored-diagram` — отметка авторской схемы и изменений. Исходный приватный путь не публикуется.
 
-**Manifest** получает `version: 4` и `projection: "reader-v1"`. Детерминированный release ID имеет вид `living-jade-reader-v1-<полный targetCommit>` и не содержит времени сборки. Manifest фиксирует frozen target commit, payload-файлы, порядок чтения, counts, размер и SHA-256 каждого payload-файла. `manifest.json` не входит в собственный список файлов. Общий binding формата `yu-reader-release-v1` вычисляется по каноническому manifest core без поля `contentBinding` и по упорядоченным точным байтам всех payload-файлов; верификатор удаляет binding, повторяет тот же расчёт и сравнивает digest.
+**Manifest** получает `version: 4` и `projection: "reader-v1"`. Детерминированный release ID имеет вид `living-jade-reader-v1-<полный T>` и не содержит времени или случайности. Manifest фиксирует `cycleId: C`, `targetCommit: T`, `reviewEvidenceCommit: E`, `readerPayloadDigest`, порядок чтения, counts и список payload-файлов. Для каждого файла указываются public path, kind `text|binary`, byte length и SHA-256. Список включает reader JSON/Markdown и точные изображения под `public/images/book-release/`; `manifest.json` не входит в собственный список.
 
-Manifest обязательно сохраняет строгую `reviewAttestation` schema v3: `reviewMode: ai-agent-panel`, `panelType: five-agent`, cycle ID, target commit, единственно допустимый gate `agent-reviewed`, точный публичный disclosure и content binding. Публичный loader принимает только этот новый формат; прежний manifest v3 с полными приватными record shapes не считается совместимым и не может быть случайно опубликован новым маршрутом.
+Manifest `files` отсортирован по public path в code-unit порядке, не допускает повторов, path aliases и normalization collisions. Между manifest-списком и файлами staging действует точная биекция: каждый обычный text/binary payload file указан ровно один раз, каждая запись имеет ровно один файл с совпадающими kind/length/SHA-256, а лишний, пропущенный, дублированный, необычный или несортированный элемент блокирует выпуск.
+
+`readerPayloadDigest` использует domain separator `yu-reader-payload-v1`. Затем для каждого payload-файла в code-unit порядке хешируются `frame(UTF-8 public path)` и `frame(exact raw bytes)`. `frame` — восьмибайтовая unsigned big-endian длина, затем payload. Текстовые файлы используют точные UTF-8 bytes общих pure serializers; бинарные assets входят как исходные raw bytes.
+
+Manifest обязательно сохраняет строгую `reviewAttestation` schema v3: `reviewMode: ai-agent-panel`, `panelType: five-agent`, `cycleId: C`, `targetCommit: T`, `reviewEvidenceCommit: E`, единственно допустимый gate `agent-reviewed`, точный публичный disclosure, `reviewedPayload` и вложенный `reviewAttestation.contentBinding`. `reviewedPayload` содержит literal format `yu-reader-payload-v1`, projection schema `reader-v1`, transformer version `reader-markdown-v1` и digest, точно равный top-level `readerPayloadDigest` и preview digest цикла `C`.
+
+`reviewAttestation.contentBinding` использует format `yu-reader-release-v1`. Его preimage: domain separator; `frame(canonical manifest projection без reviewAttestation.contentBinding)`; затем для каждого payload-файла в том же code-unit порядке `frame(path)` и `frame(raw bytes)`. Canonical JSON рекурсивно сортирует object keys, сохраняет array order, использует два пробела и завершающий LF без Unicode normalization. Верификатор удаляет только `reviewAttestation.contentBinding`, повторяет расчёт и сравнивает digest.
+
+Во всех местах действует один equality invariant: cycle config, ledger, packets, пять reports, aggregate log, preview metadata, manifest и attestation ссылаются на один **`C`**; ledger target, cycle config, packets, reports, log, preview metadata, manifest target, attestation target и SHA-часть release ID равны **`T`**; evidence commit в manifest и attestation равен **`E`**; projection/schema/transformer versions и preview/reviewed/top-level payload digests совпадают точно. Final exporter повторно строит payload из `T` и обязан получить те же paths и bytes, что review preview; несовпадение закрывает выпуск.
+
+Публичный loader принимает только новый manifest v4. Прежний manifest v3 с полными приватными record shapes не считается совместимым и не может быть случайно опубликован новым маршрутом. Integrity binding бинарных assets не является утверждением научной атрибуции или прав: отдельные rights checks и disclosure остаются обязательными.
 
 **Reading time** не является новым редакционным полем: exporter вычисляет его из спроецированного читательского текста по фиксированному правилу 220 слов в минуту, с округлением вверх и минимумом в одну минуту.
 
@@ -157,18 +197,20 @@ Manifest обязательно сохраняет строгую `reviewAttesta
 
 ## Поток данных и выпуск
 
-1. Исправить девять находок в приватном корпусе и связанных записях.
-2. Запустить все corpus/editorial тесты и зафиксировать новый frozen commit.
-3. Создать новый review-cycle и пять новых отчётов агентов.
-4. Получить строгий gate `agent-reviewed`.
-5. Финализировать точное dependency closure и bound manifest без изменения текста, кроме статусных полей.
-6. Построить reader-release по allowlist и проверить его байты и связи.
-7. Атомарно заменить только generated-каталоги книги в публичном `yu`.
-8. Собрать и проверить публичный Astro-сайт.
-9. Закоммитить проверенный generated bundle и UI в публичном репозитории.
-10. Влить или fast-forward изменения в `main`, push запустит существующий GitHub Pages workflow.
-11. Дождаться успешного deployment и проверить публичные book-маршруты, отсутствие soft-404 и точные release ID/digest.
-12. Если post-deploy smoke не подтверждает ожидаемый release ID/digest или обязательный маршрут, немедленно создать обычный revert-коммит публичного release commit и дождаться успешного redeploy последней заведомо исправной версии. История не переписывается; выпуск не считается завершённым до успешного smoke.
+1. Реализовать и проверить reader-v1 schemas, AST transformer, payload serializer и cycle-scoped tooling без продвижения реального корпуса.
+2. Исправить девять находок, добавить publicProjection/directives и проверить все связи.
+3. Запустить corpus/editorial/projection тесты и зафиксировать target commit текущей попытки.
+4. После target commit создать scoped config, resolution ledger и exact reader preview; все они ссылаются на один cycle ID, target SHA и payload digest.
+5. Провести пять новых независимых agent runs. Неуспешную попытку зафиксировать неизменяемо, исправить корпус и повторить шаги 3–5 с новыми SHA/ID, пока не будет получен строгий gate `agent-reviewed`; успешную пару обозначить `C`/`T`.
+6. Зафиксировать точные scoped artifacts цикла `C` как review-evidence commit `E`; доказать `E != T`, ancestry и exact allowlist diff.
+7. Из чистого `E` применить финализатор к точному dependency closure и manifest v4; зафиксировать результат как `F` и доказать exact allowlist diff `E..F`.
+8. Из чистого `F` повторно построить reader payload, доказать его byte equality с preview и проверить manifest/binding/bijection.
+9. Атомарно заменить только generated-каталоги книги в публичном `yu`.
+10. Собрать и проверить публичный Astro-сайт.
+11. Закоммитить проверенный generated bundle и UI в публичном репозитории.
+12. Влить или fast-forward изменения в `main`, push запустит существующий GitHub Pages workflow.
+13. Дождаться успешного deployment и проверить публичные book-маршруты, отсутствие soft-404 и точные release ID/digest.
+14. Если post-deploy smoke не подтверждает ожидаемый release ID/digest или обязательный маршрут, немедленно создать обычный revert-коммит публичного release commit и дождаться успешного redeploy последней заведомо исправной версии. История не переписывается; выпуск не считается завершённым до успешного smoke.
 
 Ручное редактирование generated bundle в `yu` запрещено. Повторный экспорт из того же release должен давать нулевой diff.
 
@@ -223,7 +265,7 @@ Manifest обязательно сохраняет строгую `reviewAttesta
 - Публичные media URLs берутся только из `publicProjection`. Локальные пути, ссылки на приватный `yu-book`, `rights/**` и иные непубличные evidence URLs отклоняются; поле source URL можно безопасно опустить, если публичного адреса нет.
 - Экспорт проверяет реальные каталоги и обычные односвязные файлы, запрещает symlink/hardlink-подмены и повторно валидирует staging после test hooks.
 - Замена публичных generated-каталогов атомарна; при ошибке восстанавливается предыдущая версия.
-- Публичный manifest связывает точные канонические байты и media digests с frozen commit.
+- Публичный manifest связывает точные text/binary payload bytes с `C`, `T`, `E`, reviewed preview digest и strict attestation; `F` отдельно доказывает чистую apply-фазу без self-reference в manifest.
 - Сбой до успешного GitHub Pages deployment не меняет уже работающую версию. Ошибка post-deploy smoke может временно оставить неверный выпуск live, поэтому обязательна описанная выше forward rollback/redeploy процедура.
 - Перед public commit staged paths сверяются с точным allowlist implementation plan. Generated reader-release, runtime source и собранный `/book` сканируются на приватные sentinel-строки и запрещённые URL/path patterns; docs и специально маркированные отрицательные test fixtures проверяются отдельно и не попадают в runtime scan.
 - Перед push проверяются commit tree и staged/generated blob lists: в публичном tree не может появиться файл, скопированный из `manuscript/**`, `editorial/**`, `research/**` или `rights/**`. Допустимо только текстовое упоминание этих названий в design docs и отрицательных тестах.
@@ -234,13 +276,19 @@ Manifest обязательно сохраняет строгую `reviewAttesta
 ### Приватный репозиторий
 
 - Регрессионный тест для каждого из девяти исправленных findings.
+- Побайтовая проверка, что legacy singleton cycle-01 config/log и его packets/reports не изменились.
 - Проверка точного coverage нового review-cycle и уникальных agentRunId.
+- Негативные тесты каждого C/T/E/digest equality edge: другой cycle ID, ledger target, report target, log target, preview digest, manifest target, attestation target, evidence commit или release-ID SHA обязаны блокировать выпуск.
+- Проверка монотонных cycle IDs и неизменяемости каждой неуспешной попытки.
+- Проверка `E != T`, ancestry и exact cycle-scoped allowlist всего diff `T..E`, включая неизменность source asset blob IDs.
+- Проверка `F != E`, ancestry, clean HEAD и exact status/release allowlist diff `E..F`; любая мутация иного поля или пути блокирует export.
 - Тест статусного продвижения полного выбранного dependency closure.
 - RED/GREEN тесты reader projection для каждого allowlist и denylist поля.
 - Проверка удаления внутренних claim markers и сохранения полного читательского текста.
 - Проверка библиографических ссылок, локаторов, паспортов и кредитов.
 - Проверка web-cleared прав на каждый экспортируемый asset.
-- Каноническая сериализация, digests, атомарность, rollback и нулевой diff повторного экспорта.
+- Каноническая сериализация, exact text/binary framing, sorted unique manifest paths, staging↔manifest bijection, per-file hashes, payload digest, release binding, атомарность, rollback и нулевой diff повторного экспорта.
+- Мутация любого preview/export payload byte, включая один байт изображения, обязана нарушить digest и остановить выпуск.
 - Полный `npm test`, TypeScript, build и dry-run до применения.
 
 ### Публичный репозиторий
@@ -260,7 +308,10 @@ Manifest обязательно сохраняет строгую `reviewAttesta
 Выпуск готов, когда одновременно выполнены все условия:
 
 - все девять findings cycle-01 исправлены или доказательно закрыты;
-- новый независимый пятиагентный цикл имеет gate `agent-reviewed`;
+- legacy cycle-01 artifacts сохранили исходные байты, все новые неуспешные циклы неизменяемы, а resolution ledger цикла `C` ссылается на `T`;
+- новый независимый пятиагентный цикл `C` имеет gate `agent-reviewed`;
+- commit `E` является неизменяемым потомком `T` с exact cycle-scoped diff, а все C/T/E/version/digest invariants совпадают;
+- commit `F` является чистым потомком `E` с exact status/release diff, а экспорт выполнен именно из `F`;
 - в публичном bundle находятся все три текущие записи и только их утверждённая читательская проекция;
 - весь повествовательный текст присутствует, а внутренние данные не присутствуют;
 - все экспортированные изображения имеют web clearance, alt, подпись, кредит и лицензию;
