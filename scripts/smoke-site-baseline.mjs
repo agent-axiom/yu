@@ -2,6 +2,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export const BASELINE_SMOKE_CONTRACT = 'yu-site-baseline-v1';
+export const BASELINE_REQUEST_TIMEOUT_MS = 10_000;
 
 export const BASELINE_ROUTES = Object.freeze([
   { path: '/yu/', marker: '<title>Живой нефрит · YU</title>' },
@@ -36,12 +37,35 @@ export async function smokeSiteBaseline({
 
   for (const route of BASELINE_ROUTES) {
     const url = new URL(route.path, `${normalizedOrigin}/`);
-    const response = await fetchImpl(url);
+    const signal = AbortSignal.timeout(BASELINE_REQUEST_TIMEOUT_MS);
+    let response;
+    try {
+      response = await fetchImpl(url, { signal });
+    } catch (error) {
+      if (signal.aborted) {
+        throw new Error(
+          `${route.path}: request timed out after ${BASELINE_REQUEST_TIMEOUT_MS}ms`,
+          { cause: error },
+        );
+      }
+      throw error;
+    }
     if (!response.ok || response.status < 200 || response.status >= 300) {
       throw new Error(`${route.path}: expected a 2xx response, received ${response.status}`);
     }
 
-    const body = await response.text();
+    let body;
+    try {
+      body = await response.text();
+    } catch (error) {
+      if (signal.aborted) {
+        throw new Error(
+          `${route.path}: request timed out after ${BASELINE_REQUEST_TIMEOUT_MS}ms`,
+          { cause: error },
+        );
+      }
+      throw error;
+    }
     const soft404 = SOFT_404_MARKERS.find((marker) => body.includes(marker));
     if (soft404) throw new Error(`${route.path}: response contains soft-404 marker "${soft404}"`);
     if (!body.includes(route.marker)) {

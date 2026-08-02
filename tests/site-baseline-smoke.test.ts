@@ -1,13 +1,15 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 type FakeResponse = {
   ok: boolean;
   status: number;
   text: () => Promise<string>;
 };
+
+type FakeFetchInit = { signal?: AbortSignal };
 
 const routeBodies = new Map([
   ['/yu/', '<title>Живой нефрит · YU</title>'],
@@ -26,10 +28,11 @@ async function loadSmokeModule() {
   const smokeUrl = pathToFileURL(join(process.cwd(), 'scripts/smoke-site-baseline.mjs')).href;
   return import(/* @vite-ignore */ smokeUrl) as Promise<{
     BASELINE_SMOKE_CONTRACT: string;
+    BASELINE_REQUEST_TIMEOUT_MS: number;
     BASELINE_ROUTES: ReadonlyArray<{ path: string; marker: string }>;
     smokeSiteBaseline: (options: {
       origin: string;
-      fetchImpl: (url: URL) => Promise<FakeResponse>;
+      fetchImpl: (url: URL, init?: FakeFetchInit) => Promise<FakeResponse>;
     }) => Promise<unknown>;
   }>;
 }
@@ -89,6 +92,28 @@ describe('version-pinned site baseline smoke', () => {
         fetchImpl: async () => response(200, '<main>страница без маркера</main>'),
       }),
     ).rejects.toThrow('stable marker');
+  });
+
+  it('bounds requests with the pinned AbortSignal timeout', async () => {
+    const { BASELINE_REQUEST_TIMEOUT_MS, smokeSiteBaseline } = await loadSmokeModule();
+    const timeoutSignal = AbortSignal.abort(new DOMException('deadline reached', 'TimeoutError'));
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(timeoutSignal);
+    const fetchImpl = vi.fn(async (_url: URL, init?: FakeFetchInit) => {
+      expect(init?.signal).toBe(timeoutSignal);
+      throw init?.signal?.reason;
+    });
+
+    try {
+      expect(BASELINE_REQUEST_TIMEOUT_MS).toBe(10_000);
+      await expect(
+        smokeSiteBaseline({ origin: 'https://agent-axiom.github.io', fetchImpl }),
+      ).rejects.toThrow('/yu/: request timed out after 10000ms');
+      expect(timeoutSpy).toHaveBeenCalledOnce();
+      expect(timeoutSpy).toHaveBeenCalledWith(10_000);
+      expect(fetchImpl).toHaveBeenCalledOnce();
+    } finally {
+      timeoutSpy.mockRestore();
+    }
   });
 
   it('has no dependency on a future book release', () => {
