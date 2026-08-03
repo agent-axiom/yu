@@ -1,5 +1,13 @@
 import { defineCollection, z } from 'astro:content';
 import { glob } from 'astro/loaders';
+import {
+  readerEntrySchema,
+  readerMediaSchema,
+  readerNoteSchema,
+  readerObjectSchema,
+  readerReleaseManifestSchema,
+  readerSourceSchema,
+} from './lib/book-release/schemas';
 
 const citations = z.array(z.string()).min(1);
 
@@ -71,4 +79,46 @@ const medicine = defineCollection({
   }),
 });
 
-export const collections = { sources, eras, myths, materials, medicine };
+const bookManifest = defineCollection({
+  loader: glob({ pattern: 'manifest.json', base: './src/content/book-release' }),
+  schema: readerReleaseManifestSchema,
+});
+
+const bookEntries = defineCollection({
+  loader: glob({ pattern: '*.md', base: './src/content/book-release/entries' }),
+  schema: readerEntrySchema,
+});
+
+const bookNotes = defineCollection({
+  loader: glob({ pattern: '*.json', base: './src/content/book-release/notes' }),
+  schema: readerNoteSchema,
+});
+
+const bookSources = defineCollection({
+  loader: glob({ pattern: '*.json', base: './src/content/book-release/sources' }),
+  schema: readerSourceSchema,
+});
+
+const bookObjects = defineCollection({
+  loader: glob({ pattern: '*.json', base: './src/content/book-release/objects' }),
+  schema: readerObjectSchema,
+});
+
+const bookMedia = defineCollection({
+  loader: glob({ pattern: '*.json', base: './src/content/book-release/media' }),
+  schema: readerMediaSchema,
+});
+
+export const collections = {
+  sources,
+  eras,
+  myths,
+  materials,
+  medicine,
+  bookManifest,
+  bookEntries,
+  bookNotes,
+  bookSources,
+  bookObjects,
+  bookMedia,
+};
