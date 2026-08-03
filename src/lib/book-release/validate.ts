@@ -1,4 +1,5 @@
-import { lstat, readdir, readFile } from 'node:fs/promises';
+import { constants as fileConstants } from 'node:fs';
+import { lstat, open, readdir } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { join, relative, resolve, sep } from 'node:path';
@@ -207,9 +208,10 @@ function canonicalSecurityValue(value: string): string {
   return current;
 }
 
-function canonicalizeRepositoryScanValue(value: string, normalizeBackslashes = true): string {
+function canonicalizeMixedPathSegments(value: string): string {
   const resolved: string[] = [];
-  const slashed = normalizeBackslashes ? value.replace(/\\/gu, '/') : value;
+  const slashed = value.replace(/\\/gu, '/');
+  const root = slashed.startsWith('//') ? '//' : slashed.startsWith('/') ? '/' : '';
   for (const segment of slashed.split('/')) {
     if (segment === '' || segment === '.') continue;
     if (segment === '..') {
@@ -220,7 +222,7 @@ function canonicalizeRepositoryScanValue(value: string, normalizeBackslashes = t
     }
     resolved.push(segment);
   }
-  return resolved.join('/');
+  return `${root}${resolved.join('/')}`;
 }
 
 function hasPrivateRepositoryCoordinate(value: string): boolean {
@@ -236,7 +238,7 @@ function hasPrivateRepositoryCoordinate(value: string): boolean {
     }
     let end = start + privateRepositoryOrganization.length;
     while (end < value.length && /[a-z0-9._/\\-]/iu.test(value[end]!)) end += 1;
-    const normalized = canonicalizeRepositoryScanValue(value.slice(start, end)).toLowerCase();
+    const normalized = canonicalizeMixedPathSegments(value.slice(start, end)).toLowerCase();
     const coordinate = `${privateRepositoryOrganization}/${privateRepositoryName}`;
     const suffix = normalized.slice(coordinate.length);
     if (normalized.startsWith(coordinate)
@@ -259,27 +261,14 @@ function externalUrlQueryAndFragmentScan(value: string): string {
   });
 }
 
-function hasPrivatePath(value: string, normalizeBackslashes = true): boolean {
-  const pathValue = normalizeBackslashes ? value.replace(/\\/gu, '/') : value;
-  const slashed = externalUrlQueryAndFragmentScan(pathValue);
+function hasPrivatePath(value: string): boolean {
+  const slashed = canonicalizeMixedPathSegments(externalUrlQueryAndFragmentScan(value));
   const privateRoots = ['rig' + 'hts', 'manu' + 'script', 'resea' + 'rch', 'edito' + 'rial'].join('|');
   if (new RegExp(`(?:^|[^a-z0-9._-])(?:${privateRoots})/`, 'iu').test(slashed)) return true;
   if (/(?:^|[^a-z0-9._-])\/(?:Users|home|private)\//iu.test(slashed)) return true;
   if (/(?:^|[^a-z0-9._-])(?:[a-z]:\/|~\/)/iu.test(slashed)) return true;
   if (/(?:^|[^a-z0-9._:-])\/\/[^/\s]+\//iu.test(slashed)) return true;
   return false;
-}
-
-function hasPrivateBackslashPath(value: string): boolean {
-  const separator = '\\\\';
-  const privateRoots = ['rig' + 'hts', 'manu' + 'script', 'resea' + 'rch', 'edito' + 'rial'].join('|');
-  const patterns = [
-    new RegExp(`(?:^|[^a-z0-9._-])(?:${privateRoots})${separator}+`, 'iu'),
-    new RegExp(`(?:^|[^a-z0-9._-])[a-z]:${separator}+`, 'iu'),
-    new RegExp(`(?:^|[^a-z0-9._-])${separator}+(?:Users|home|private)${separator}+`, 'iu'),
-    new RegExp(`(?:^|[^a-z0-9._-])${separator}{2}[^${separator}\\s]+${separator}+`, 'iu'),
-  ];
-  return patterns.some((pattern) => pattern.test(value));
 }
 
 function privateSentinel(value: string): string | null {
@@ -298,15 +287,15 @@ function runtimeSourceSentinel(
   value: string,
   directiveScanValue = value,
   scanDangerousExactText = true,
+  scanPrivateExactText = true,
 ): string | null {
   if (forbiddenUnicodeTextControlPattern.test(value)) return 'Unicode control';
   const canonical = canonicalSecurityValue(value);
   if (forbiddenUnicodeTextControlPattern.test(canonical)) return 'decoded Unicode control';
-  if (hasPrivateRepositoryCoordinate(canonical)) {
+  if (scanPrivateExactText && hasPrivateRepositoryCoordinate(canonical)) {
     return 'private repository coordinate';
   }
-  if (privateIdPattern.test(canonical)) return 'private-prefixed identifier';
-  if (hasPrivatePath(canonical, false) || hasPrivateBackslashPath(canonical)) return 'private repository path';
+  if (scanPrivateExactText && hasPrivatePath(canonical)) return 'private repository path';
   if (exactArtifactDirectivePattern.test(canonicalSecurityValue(directiveScanValue))) return 'raw directive';
   if (scanDangerousExactText && hasDangerousSchemeInCanonicalText(canonical)) return 'dangerous URL scheme';
   return null;
@@ -938,7 +927,7 @@ const decodedArtifactPolicy: DecodedFragmentPolicy = {
   directives: true,
   schemes: true,
 };
-const decodedRuntimePolicy: DecodedFragmentPolicy = {
+const decodedProsePolicy: DecodedFragmentPolicy = {
   ...decodedArtifactPolicy,
   privateIds: true,
 };
@@ -952,8 +941,7 @@ function decodedFragmentSentinel(
   assertNoForbiddenUnicodeControls(canonical, 'canonical decoded syntax fragment');
   if (hasPrivateRepositoryCoordinate(canonical)) return 'private repository coordinate';
   if (policy.privateIds && privateIdPattern.test(canonical)) return 'private-prefixed identifier';
-  if (policy.privatePaths
-    && (hasPrivatePath(canonical, false) || hasPrivateBackslashPath(canonical))) {
+  if (policy.privatePaths && hasPrivatePath(canonical)) {
     return 'private repository path';
   }
   if (policy.directives && exactArtifactDirectivePattern.test(canonical)) return 'raw directive';
@@ -1003,6 +991,20 @@ function scriptSourceSentinel(
       || tsCompiler.isTemplateLiteralToken(node)
       || tsCompiler.isJsxText(node)) {
       found = decodedFragmentSentinel(node.text, policy) ?? found;
+      if (tsCompiler.isStringLiteralLike(node)) {
+        const sourceToken = source.slice(node.getStart(sourceFile), node.end);
+        const delimiter = sourceToken[0];
+        if ((delimiter === '"' || delimiter === "'" || delimiter === '`')
+          && sourceToken.at(-1) === delimiter) {
+          found = decodedFragmentSentinel(sourceToken.slice(1, -1), policy) ?? found;
+        }
+      }
+      if (tsCompiler.isTemplateLiteralToken(node)) {
+        const rawText = (node as typeof node & { rawText?: string }).rawText;
+        if (rawText !== undefined && rawText !== node.text) {
+          found = decodedFragmentSentinel(rawText, policy) ?? found;
+        }
+      }
     }
     if (!found) tsCompiler.forEachChild(node, visit);
   };
@@ -1018,12 +1020,15 @@ function astroSourceSentinel(source: string, label: string): string | null {
   }
   let found: string | null = null;
   const scanScript = (value: string, suffix: string) => {
-    if (!found) found = scriptSourceSentinel(value, `${label}${suffix}.tsx`, decodedRuntimePolicy);
+    if (!found) found = scriptSourceSentinel(value, `${label}${suffix}.tsx`);
   };
   const visit = (node: AstroNode): void => {
     if (found) return;
-    if (node.type === 'text' || node.type === 'comment') {
-      found = decodedFragmentSentinel(node.value, decodedRuntimePolicy) ?? found;
+    if (node.type === 'text') {
+      found = decodedFragmentSentinel(node.value, decodedProsePolicy) ?? found;
+    }
+    if (node.type === 'comment') {
+      found = decodedFragmentSentinel(node.value) ?? found;
     }
     if (node.type === 'frontmatter') scanScript(node.value, '.frontmatter');
     if (node.type === 'expression') {
@@ -1038,7 +1043,13 @@ function astroSourceSentinel(source: string, label: string): string | null {
           throw new Error(`${label} contains a dynamic Astro spread attribute`);
         }
         if (attribute.kind === 'quoted' || attribute.kind === 'empty') {
-          found = decodedFragmentSentinel(attribute.value, decodedRuntimePolicy) ?? found;
+          const attributeName = attribute.name.toLowerCase();
+          const policy = builtAccessibleTextAttributeNames.has(attributeName)
+            || attributeName === 'abbr'
+            || attributeName === 'label'
+            ? decodedProsePolicy
+            : decodedArtifactPolicy;
+          found = decodedFragmentSentinel(attribute.value, policy) ?? found;
         } else {
           scanScript(attribute.value, `.attribute-${attribute.name}`);
         }
@@ -1444,7 +1455,7 @@ function scanCssGeneratedProse(
         let currentRun = '';
         const flush = () => {
           if (!currentRun) return;
-          const sentinel = decodedFragmentSentinel(currentRun, decodedRuntimePolicy);
+          const sentinel = decodedFragmentSentinel(currentRun, decodedProsePolicy);
           if (sentinel) throw new Error(`${label} contains forbidden CSS-generated prose (${sentinel})`);
           currentRun = '';
         };
@@ -1499,7 +1510,7 @@ function scanEmbeddedCssGeneratedProse(
 function releasePathSentinel(relativePath: string): string | null {
   const canonical = canonicalSecurityValue(relativePath);
   if (canonical.includes('\\')) return 'ambiguous reverse solidus';
-  const repositoryPath = canonicalizeRepositoryScanValue(canonical);
+  const repositoryPath = canonicalizeMixedPathSegments(canonical);
   if (hasPrivateRepositoryCoordinate(repositoryPath)) {
     return 'private repository coordinate';
   }
@@ -1534,6 +1545,38 @@ async function pathMetadata(path: string) {
   return metadata;
 }
 
+async function readSingleLinkReleaseFile(
+  path: string,
+  relativePath: string,
+  expected: NonNullable<Awaited<ReturnType<typeof pathMetadata>>>,
+): Promise<Buffer> {
+  if (!expected.isFile()) throw new Error(`release-layer scan requires regular files: ${relativePath}`);
+  if (expected.nlink !== 1) {
+    throw new Error(`release-layer scan rejects files with multiple hard links: ${relativePath}`);
+  }
+  const handle = await open(path, fileConstants.O_RDONLY | fileConstants.O_NOFOLLOW);
+  try {
+    const opened = await handle.stat();
+    if (!opened.isFile()
+      || opened.nlink !== 1
+      || opened.dev !== expected.dev
+      || opened.ino !== expected.ino) {
+      throw new Error(`release-layer file identity changed or has multiple hard links: ${relativePath}`);
+    }
+    const bytes = await handle.readFile();
+    const verified = await handle.stat();
+    if (!verified.isFile()
+      || verified.nlink !== 1
+      || verified.dev !== opened.dev
+      || verified.ino !== opened.ino) {
+      throw new Error(`release-layer file identity changed or has multiple hard links: ${relativePath}`);
+    }
+    return bytes;
+  } finally {
+    await handle.close();
+  }
+}
+
 async function scanRuntimePath(projectRoot: string, path: string): Promise<void> {
   const relativePath = relative(projectRoot, path).split(sep).join('/');
   assertReleasePathSafe(relativePath);
@@ -1545,8 +1588,7 @@ async function scanRuntimePath(projectRoot: string, path: string): Promise<void>
     for (const name of names) await scanRuntimePath(projectRoot, join(path, name));
     return;
   }
-  if (!metadata.isFile()) throw new Error(`release-layer scan requires regular files: ${relativePath}`);
-  const bytes = await readFile(path);
+  const bytes = await readSingleLinkReleaseFile(path, relativePath, metadata);
   let contents: string;
   try {
     contents = runtimeTextExtensions.test(relativePath) ? strictUtf8.decode(bytes) : bytes.toString('utf8');
@@ -1554,14 +1596,15 @@ async function scanRuntimePath(projectRoot: string, path: string): Promise<void>
     throw new Error(`${relativePath} is not valid UTF-8 runtime source`, { cause: error });
   }
   const context = artifactContext(relativePath, true);
-  const contextScansDangerousSchemes = context === 'astro'
+  const contextHasSemanticScanner = context === 'astro'
     || (context === 'generic' && scriptLikeArtifactExtensions.test(relativePath));
   let sentinel: string | null;
   try {
     sentinel = runtimeSourceSentinel(
       contents,
       directiveScanSource(contents, context, relativePath),
-      !contextScansDangerousSchemes,
+      !contextHasSemanticScanner,
+      !contextHasSemanticScanner,
     );
     if (!sentinel && context === 'astro') {
       sentinel = astroSourceSentinel(contents, relativePath);
@@ -1569,9 +1612,9 @@ async function scanRuntimePath(projectRoot: string, path: string): Promise<void>
     if (!sentinel
       && context === 'generic'
       && scriptLikeArtifactExtensions.test(relativePath)) {
-      sentinel = scriptSourceSentinel(contents, relativePath, decodedRuntimePolicy);
+      sentinel = scriptSourceSentinel(contents, relativePath);
     }
-    scanEmbeddedCssGeneratedProse(contents, context, relativePath, decodedRuntimePolicy);
+    scanEmbeddedCssGeneratedProse(contents, context, relativePath);
   } catch (error) {
     throw new Error(`${relativePath} contains invalid canonical security text`, { cause: error });
   }
@@ -1756,7 +1799,7 @@ function builtScriptSourceSentinel(script: BuiltScriptSource, label: string): st
 
 function parsedBuiltReaderDocument(contents: string): {
   visibleText: string;
-  securityText: string[];
+  securityTextRuns: string[];
   accessibleText: string[];
   urls: string[];
   srcdocs: string[];
@@ -1764,14 +1807,20 @@ function parsedBuiltReaderDocument(contents: string): {
   scriptSources: BuiltScriptSource[];
 } {
   const text: string[] = [];
-  const securityText: string[] = [];
+  const securityTextRuns: string[] = [];
+  let securityRun: string[] = [];
   const accessibleText: string[] = [];
   const urls: string[] = [];
   const srcdocs: string[] = [];
   const inlineStyles: string[] = [];
   const scriptSources: BuiltScriptSource[] = [];
-  const boundary = () => {
-    if (text.length > 0 && !text.at(-1)?.endsWith('\n')) text.push('\n');
+  const boundary = (target: string[]) => {
+    if (target.length > 0 && !target.at(-1)?.endsWith('\n')) target.push('\n');
+  };
+  const flushSecurityRun = () => {
+    const value = securityRun.join('');
+    if (value) securityTextRuns.push(value);
+    securityRun = [];
   };
   const collectUrlAttributes = (element: HtmlElement) => {
     const tagName = element.tagName.toLowerCase();
@@ -1790,7 +1839,7 @@ function parsedBuiltReaderDocument(contents: string): {
   };
   const visit = (node: HtmlNode, readerVisible = true): void => {
     if (isHtmlTextNode(node)) {
-      securityText.push(node.value);
+      securityRun.push(node.value);
       if (readerVisible) text.push(node.value);
       return;
     }
@@ -1834,7 +1883,9 @@ function parsedBuiltReaderDocument(contents: string): {
       accessibleText.push(attributes.get('abbr')!);
     }
     if (isHtmlTemplate(node)) {
+      flushSecurityRun();
       for (const child of htmlChildNodes(node)) visit(child, false);
+      flushSecurityRun();
       return;
     }
     if (builtHiddenTextElements.has(tagName)) return;
@@ -1862,19 +1913,27 @@ function parsedBuiltReaderDocument(contents: string): {
         accessibleText.push(content);
       }
     }
-    if (readerVisible && tagName === 'br') {
-      boundary();
+    if (tagName === 'br') {
+      flushSecurityRun();
+      if (readerVisible) boundary(text);
       return;
     }
-    const isBlock = readerVisible && builtBlockElements.has(tagName);
-    if (isBlock) boundary();
+    const isBlock = builtBlockElements.has(tagName);
+    if (isBlock) {
+      flushSecurityRun();
+      if (readerVisible) boundary(text);
+    }
     for (const child of htmlChildNodes(node)) visit(child, readerVisible);
-    if (isBlock) boundary();
+    if (isBlock) {
+      flushSecurityRun();
+      if (readerVisible) boundary(text);
+    }
   };
   visit(parse(contents, { scriptingEnabled: false }));
+  flushSecurityRun();
   return {
     visibleText: text.join(''),
-    securityText,
+    securityTextRuns,
     accessibleText,
     urls,
     srcdocs,
@@ -1887,7 +1946,7 @@ function scanBuiltReaderDocument(contents: string, relativePath: string, srcdocD
   scanEmbeddedCssGeneratedProse(contents, 'html', relativePath);
   const {
     visibleText,
-    securityText,
+    securityTextRuns,
     accessibleText,
     urls,
     srcdocs,
@@ -1908,7 +1967,7 @@ function scanBuiltReaderDocument(contents: string, relativePath: string, srcdocD
     }
   }
   for (const url of urls) assertBuiltReaderUrlSafe(url, relativePath);
-  for (const prose of securityText) {
+  for (const prose of [...securityTextRuns, ...accessibleText]) {
     const sentinel = decodedFragmentSentinel(prose);
     if (sentinel) {
       throw new Error(`${relativePath} contains a forbidden decoded HTML text sentinel (${sentinel})`);
@@ -1939,8 +1998,7 @@ async function scanBuiltPath(projectRoot: string, path: string): Promise<void> {
     for (const name of names) await scanBuiltPath(projectRoot, join(path, name));
     return;
   }
-  if (!metadata.isFile()) throw new Error(`release-layer scan requires regular files: ${relativePath}`);
-  const bytes = await readFile(path);
+  const bytes = await readSingleLinkReleaseFile(path, relativePath, metadata);
   const context = artifactContext(relativePath, false);
   scanBuiltTextArtifact(bytes.toString('utf8'), relativePath, false, context);
   if (!builtTextExtensions.test(relativePath)) return;
