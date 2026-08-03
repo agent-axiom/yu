@@ -102,6 +102,69 @@ function createLoaderContext(
   return context as unknown as LoaderContext;
 }
 
+type SyntheticWatcherEvent = 'add' | 'change' | 'unlink' | 'addDir' | 'unlinkDir';
+
+function createMultiListenerWatcher() {
+  const listeners = new Map<string, Set<(changedPath: string) => void>>();
+  const watchedPaths: string[] = [];
+  const watcher = {
+    add(paths: string | readonly string[]) {
+      watchedPaths.push(...(typeof paths === 'string' ? [paths] : paths));
+      return watcher;
+    },
+    on(event: string, callback: (changedPath: string) => void) {
+      const eventListeners = listeners.get(event) ?? new Set();
+      eventListeners.add(callback);
+      listeners.set(event, eventListeners);
+      return watcher;
+    },
+  };
+  return {
+    watcher: watcher as unknown as LoaderContext['watcher'],
+    emit(event: SyntheticWatcherEvent, changedPath: string) {
+      for (const callback of listeners.get(event) ?? []) callback(changedPath);
+    },
+    listenerCount(event: SyntheticWatcherEvent) {
+      return listeners.get(event)?.size ?? 0;
+    },
+    watchedPaths,
+  };
+}
+
+function createSixReaderLoaders(
+  factories: LoaderFactories,
+  beforeWrite: (index: number) => void | Promise<void> = () => undefined,
+): Loader[] {
+  const body = Array.from({ length: 221 }, () => 'слово').join(' ');
+  const writes: Array<(store: DataStore) => void> = [
+    (store) => { store.set({ id: 'manifest', data: validManifest }); },
+    (store) => {
+      store.set({
+        id: validEntry.id,
+        data: validEntry,
+        body,
+        filePath: 'src/content/book-release/entries/chapter-04.md',
+      });
+    },
+    (store) => { store.set({ id: validNote.id, data: validNote }); },
+    (store) => { store.set({ id: validSource.id, data: validSource }); },
+    (store) => { store.set({ id: validObject.id, data: validObject }); },
+    (store) => { store.set({ id: validDocumentaryMedia.id, data: validDocumentaryMedia }); },
+  ];
+  const baseLoaders = writes.map((write, index): Loader => ({
+    name: `six-reader-loader-${index}`,
+    async load({ store }) {
+      await beforeWrite(index);
+      write(store);
+    },
+  }));
+  return [
+    factories.withReaderManifestValidation(baseLoaders[0]),
+    factories.withReaderEntryValidation(baseLoaders[1]),
+    ...baseLoaders.slice(2).map((loader) => factories.withImmutableReaderCollection(loader)),
+  ];
+}
+
 async function createReleaseTree(options: { manifest?: boolean; omit?: 'notes'; payload?: boolean } = {}) {
   const rootPath = await mkdtemp(join(tmpdir(), 'yu-reader-loader-'));
   const releasePath = join(rootPath, 'src/content/book-release');
@@ -498,16 +561,9 @@ describe('production reader collection loaders', () => {
 
   it('invalidates entry content on any watched release change without registering the base watcher', async () => {
     const { withReaderEntryValidation } = await loadFactories();
-    const callbacks = new Map<string, (...args: unknown[]) => unknown>();
+    const syntheticWatcher = createMultiListenerWatcher();
     let baseReceivedWatcher = false;
     const logs: string[] = [];
-    const watcher = {
-      add: () => undefined,
-      on: (event: string, callback: (...args: unknown[]) => unknown) => {
-        callbacks.set(event, callback);
-        return watcher;
-      },
-    } as unknown as LoaderContext['watcher'];
     const body = Array.from({ length: 221 }, () => 'слово').join(' ');
     const baseLoader: Loader = {
       name: 'watching-entry-loader',
@@ -525,10 +581,10 @@ describe('production reader collection loaders', () => {
     const root = await mkdtemp(join(tmpdir(), 'yu-reader-watch-'));
     try {
       await withReaderEntryValidation(baseLoader).load(createLoaderContext(
-        pathToFileURL(`${root}/`), store, watcher, logs,
+        pathToFileURL(`${root}/`), store, syntheticWatcher.watcher, logs,
       ));
       expect(baseReceivedWatcher).toBe(false);
-      callbacks.get('change')?.(join(root, 'src/content/book-release/notes/note-002.json'));
+      syntheticWatcher.emit('change', join(root, 'src/content/book-release/notes/note-002.json'));
       expect(store.values()).toEqual([]);
       expect(logs.join('\n')).toMatch(/restart required/i);
     } finally {
@@ -656,14 +712,7 @@ describe('production reader collection loaders', () => {
   it('clears the manifest gate on any watched payload change without auto-reloading', async () => {
     const { withReaderManifestValidation } = await loadFactories();
     const tree = await createReleaseTree();
-    const callbacks = new Map<string, (...args: unknown[]) => unknown>();
-    const watcher = {
-      add: () => undefined,
-      on: (event: string, callback: (...args: unknown[]) => unknown) => {
-        callbacks.set(event, callback);
-        return watcher;
-      },
-    } as unknown as LoaderContext['watcher'];
+    const syntheticWatcher = createMultiListenerWatcher();
     try {
       const store = createMemoryStore();
       const baseLoader: Loader = {
@@ -673,12 +722,68 @@ describe('production reader collection loaders', () => {
         },
       };
       await withReaderManifestValidation(baseLoader)
-        .load(createLoaderContext(tree.root, store, watcher));
+        .load(createLoaderContext(tree.root, store, syntheticWatcher.watcher));
       expect(store.values()).toHaveLength(1);
 
       const changedImage = join(tree.rootPath, 'public/images/book-release/changed.webp');
-      await callbacks.get('change')?.(changedImage);
+      syntheticWatcher.emit('change', changedImage);
       expect(store.values()).toEqual([]);
+    } finally {
+      await rm(tree.rootPath, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed across all six stores when a shared watcher fires during initial load', async () => {
+    const factories = await loadFactories();
+    const tree = await createReleaseTree();
+    const syntheticWatcher = createMultiListenerWatcher();
+    const stores = Array.from({ length: 6 }, () => createMemoryStore());
+    const logs: string[] = [];
+    let started = 0;
+    let releaseLoads: () => void = () => undefined;
+    const allLoadsStarted = new Promise<void>((resolve) => { releaseLoads = resolve; });
+    const loaders = createSixReaderLoaders(factories, async (index) => {
+      started += 1;
+      if (started === 6) releaseLoads();
+      await allLoadsStarted;
+      if (index === 0) {
+        syntheticWatcher.emit('addDir', join(tree.rootPath, 'public/images/book-release'));
+      }
+    });
+    try {
+      const results = await Promise.allSettled(loaders.map((loader, index) => loader.load(
+        createLoaderContext(tree.root, stores[index], syntheticWatcher.watcher, logs),
+      )));
+      expect(results.every((result) => result.status === 'rejected')).toBe(true);
+      expect(stores.every((store) => store.values().length === 0)).toBe(true);
+      expect(logs.join('\n')).toMatch(/restart required/i);
+    } finally {
+      await rm(tree.rootPath, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['add', 'src/content/book-release/notes/note-002.json'],
+    ['change', 'public/images/book-release/changed.webp'],
+    ['unlink', 'src/content/book-release/media/media-site-context.json'],
+    ['addDir', 'public/images/book-release'],
+    ['unlinkDir', 'src/content/book-release'],
+  ] as const)('clears all six stores after a shared %s event', async (event, relativePath) => {
+    const factories = await loadFactories();
+    const tree = await createReleaseTree();
+    const syntheticWatcher = createMultiListenerWatcher();
+    const stores = Array.from({ length: 6 }, () => createMemoryStore());
+    const loaders = createSixReaderLoaders(factories);
+    try {
+      await Promise.all(loaders.map((loader, index) => loader.load(
+        createLoaderContext(tree.root, stores[index], syntheticWatcher.watcher),
+      )));
+      expect(stores.every((store) => store.values().length === 1)).toBe(true);
+      for (const watchedEvent of ['add', 'change', 'unlink', 'addDir', 'unlinkDir'] as const) {
+        expect(syntheticWatcher.listenerCount(watchedEvent)).toBe(1);
+      }
+      syntheticWatcher.emit(event, join(tree.rootPath, relativePath));
+      expect(stores.every((store) => store.values().length === 0)).toBe(true);
     } finally {
       await rm(tree.rootPath, { recursive: true, force: true });
     }

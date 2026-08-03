@@ -702,42 +702,109 @@ function isInsideReleaseRoot(rootPath: string, changedPath: string): boolean {
   return pathFromRoot === '' || (!pathFromRoot.startsWith('../') && !isAbsolute(pathFromRoot));
 }
 
-type ImmutableReaderCollectionOptions = {
-  watchPublicImages?: boolean;
+const READER_RELEASE_RESTART_REQUIRED =
+  'Reader release changed; restart required before book content can be loaded again.';
+
+type ReaderInvalidationTarget = {
+  store: DataStore;
+  logger: LoaderContext['logger'];
+  loading: boolean;
+  dirtyDuringLoad: boolean;
 };
 
-export function withImmutableReaderCollection(
-  baseLoader: Loader,
-  options: ImmutableReaderCollectionOptions = {},
-): Loader {
+type ReaderInvalidationCoordinator = {
+  invalidated: boolean;
+  warned: boolean;
+  targets: Set<ReaderInvalidationTarget>;
+};
+
+type ReaderInvalidationRegistration = {
+  coordinator: ReaderInvalidationCoordinator;
+  target: ReaderInvalidationTarget;
+};
+
+const readerInvalidationCoordinators = new WeakMap<object, Map<string, ReaderInvalidationCoordinator>>();
+
+function registerReaderInvalidation(context: LoaderContext): ReaderInvalidationRegistration | undefined {
+  const watcher = context.watcher;
+  if (!watcher) return undefined;
+
+  const watchedPaths = [
+    fileURLToPath(releaseRootUrl(context)),
+    fileURLToPath(publicImageRootUrl(context)),
+  ];
+  const coordinatorKey = watchedPaths.join('\0');
+  let watcherCoordinators = readerInvalidationCoordinators.get(watcher);
+  if (!watcherCoordinators) {
+    watcherCoordinators = new Map();
+    readerInvalidationCoordinators.set(watcher, watcherCoordinators);
+  }
+
+  let coordinator = watcherCoordinators.get(coordinatorKey);
+  const target: ReaderInvalidationTarget = {
+    store: context.store,
+    logger: context.logger,
+    loading: true,
+    dirtyDuringLoad: false,
+  };
+  if (!coordinator) {
+    const newCoordinator: ReaderInvalidationCoordinator = {
+      invalidated: false,
+      warned: false,
+      targets: new Set([target]),
+    };
+    coordinator = newCoordinator;
+    watcherCoordinators.set(coordinatorKey, newCoordinator);
+    const invalidateRelease = (changedPath: string) => {
+      if (!watchedPaths.some((rootPath) => isInsideReleaseRoot(rootPath, changedPath))) return;
+      newCoordinator.invalidated = true;
+      for (const registeredTarget of newCoordinator.targets) {
+        if (registeredTarget.loading) registeredTarget.dirtyDuringLoad = true;
+        registeredTarget.store.clear();
+      }
+      if (!newCoordinator.warned) {
+        target.logger.warn(READER_RELEASE_RESTART_REQUIRED);
+        newCoordinator.warned = true;
+      }
+    };
+    watcher.on('add', invalidateRelease);
+    watcher.on('change', invalidateRelease);
+    watcher.on('unlink', invalidateRelease);
+    watcher.on('addDir', invalidateRelease);
+    watcher.on('unlinkDir', invalidateRelease);
+    watcher.add(watchedPaths);
+  } else {
+    coordinator.targets.add(target);
+  }
+
+  if (coordinator.invalidated) {
+    target.dirtyDuringLoad = true;
+    target.store.clear();
+  }
+  return { coordinator, target };
+}
+
+export function withImmutableReaderCollection(baseLoader: Loader): Loader {
   return {
     name: `immutable-reader:${baseLoader.name}`,
     async load(context) {
+      let invalidation: ReaderInvalidationRegistration | undefined;
       try {
+        invalidation = registerReaderInvalidation(context);
+        if (invalidation?.coordinator.invalidated) {
+          throw new Error(READER_RELEASE_RESTART_REQUIRED);
+        }
         await baseLoader.load({ ...context, watcher: undefined });
+        if (invalidation?.target.dirtyDuringLoad) {
+          context.store.clear();
+          throw new Error(READER_RELEASE_RESTART_REQUIRED);
+        }
       } catch (error) {
         context.store.clear();
         throw error;
+      } finally {
+        if (invalidation) invalidation.target.loading = false;
       }
-
-      if (!context.watcher) return;
-      const watchedPaths = [
-        fileURLToPath(releaseRootUrl(context)),
-        ...(options.watchPublicImages ? [fileURLToPath(publicImageRootUrl(context))] : []),
-      ];
-      context.watcher.add(watchedPaths);
-      let invalidated = false;
-      const invalidateCollection = (changedPath: string) => {
-        if (!watchedPaths.some((rootPath) => isInsideReleaseRoot(rootPath, changedPath))) return;
-        context.store.clear();
-        if (!invalidated) {
-          context.logger.warn('Reader release changed; restart required before book content can be loaded again.');
-          invalidated = true;
-        }
-      };
-      context.watcher.on('add', invalidateCollection);
-      context.watcher.on('change', invalidateCollection);
-      context.watcher.on('unlink', invalidateCollection);
     },
   };
 }
@@ -750,7 +817,7 @@ export function withReaderManifestValidation(baseLoader: Loader): Loader {
       validateLoadedManifest(context);
     },
   };
-  return withImmutableReaderCollection(validatingLoader, { watchPublicImages: true });
+  return withImmutableReaderCollection(validatingLoader);
 }
 
 export type ReaderEntry = z.infer<typeof readerEntrySchema>;
