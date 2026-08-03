@@ -18,6 +18,7 @@ import {
   type ReaderSource,
 } from './schemas';
 import {
+  recheckVerifiedReaderRelease,
   verifyReaderReleaseIntegrity,
   type RawReaderReleaseFile,
 } from './integrity';
@@ -198,5 +199,6 @@ export async function loadValidatedReaderRelease(root: string | URL): Promise<Lo
   if (!manifestBytes.equals(finalManifestBytes)) {
     throw new Error('reader release manifest changed during validation');
   }
+  await recheckVerifiedReaderRelease(files);
   return release;
 }

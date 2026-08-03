@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   assertReaderMarkdownSafe,
   assertReaderProseFieldsSafe,
+  readerMarkdownLinks,
   scanReaderReleaseLayers,
 } from '../src/lib/book-release/validate';
 import {
@@ -18,6 +19,12 @@ async function writeLayerFile(root: string, path: string, contents: string): Pro
   const absolutePath = join(root, path);
   await mkdir(dirname(absolutePath), { recursive: true });
   await writeFile(absolutePath, contents);
+}
+
+function nestedPercentEncoding(value: string, depth: number): string {
+  let encoded = value;
+  for (let index = 0; index < depth; index += 1) encoded = encodeURIComponent(encoded);
+  return encoded;
 }
 
 describe('reader Markdown safety', () => {
@@ -37,6 +44,16 @@ describe('reader Markdown safety', () => {
     ['different directive adjacent to code', '`::figure{id="x"}`::interlude{id="y"}'],
     ['encoded adjacent directive', '`::figure{id="x"}`%3A%3Ainterlude{id="y"}'],
     ['two adjacent ordinary directives', '::figure{id="x"}::interlude{id="y"}'],
+    ['leaf directive without attributes', '::private'],
+    ['figure leaf directive without attributes', '::figure'],
+    ['leaf directive with a label', '::private[label]'],
+    ['container directive', ':::private'],
+    ['text directive', ':private[label]'],
+    ['encoded leaf directive', '%3A%3Aprivate%5Blabel%5D'],
+    ['formatted leaf directive', '::pri**vate**[label]'],
+    ['formatted text directive', ':pri*vate*[label]'],
+    ['directive immediately after inline code', '`::private[label]`::figure'],
+    ['container directive immediately after inline code', '`::private[label]`:::private'],
   ])('rejects %s', (_label, markdown) => {
     expect(() => assertReaderMarkdownSafe(markdown)).toThrow(/HTML|image|directive|unsafe/iu);
   });
@@ -100,6 +117,16 @@ describe('reader Markdown safety', () => {
     expect(() => assertReaderMarkdownSafe(`[ссылка](${url})`)).not.toThrow();
   });
 
+  it('returns one canonical representation for encoded structural links', () => {
+    expect(readerMarkdownLinks([
+      '[сноска](#note%2D001)',
+      '[переход](/book/%72ead/jade-immortality/)',
+    ].join('\n'))).toEqual([
+      '#note-001',
+      '/book/read/jade-immortality/',
+    ]);
+  });
+
   it('allows directive examples inside inline and fenced code only', () => {
     expect(() => assertReaderMarkdownSafe([
       'Синтаксис `::figure{id="example"}` показан как код.',
@@ -109,6 +136,16 @@ describe('reader Markdown safety', () => {
       '```',
       '',
       '`::fig%75re{id="encoded"}` is encoded code.',
+      '`::private` and `::figure` and `::private[label]` are code.',
+      '`:::private` and `:private[label]` are code.',
+      '',
+      '```md',
+      '::private',
+      '::figure',
+      '::private[label]',
+      ':::private',
+      ':private[label]',
+      '```',
     ].join('\n'))).not.toThrow();
   });
 
@@ -122,7 +159,6 @@ describe('reader Markdown safety', () => {
   it.each([
     '`::figure{id="x"}`*`::interlude{id="y"}`*',
     '`::figure{id="x"}`\\\\::interlude{id="y"}',
-    '`::figure{id="x"}`:::interlude{id="y"}',
   ])('allows adjacent complete-code or escaped control neighbors: %s', (markdown) => {
     expect(() => assertReaderMarkdownSafe(markdown)).not.toThrow();
   });
@@ -141,6 +177,23 @@ describe('reader Markdown safety', () => {
     'Invalid surrogate entity: %26%23xD800%3B.',
   ])('rejects an invalid canonical entity deterministically: %s', (markdown) => {
     expect(() => assertReaderMarkdownSafe(markdown)).toThrow(/entity|code point|canonical/iu);
+  });
+
+  it.each([
+    ['zero-width space', `Visible\u200Btext`],
+    ['soft hyphen', `Visible\u00ADtext`],
+    ['right-to-left override', `Visible\u202Etext`],
+    ['left-to-right isolate', `Visible\u2066text`],
+  ])('rejects Unicode format control %s in reader Markdown', (_label, markdown) => {
+    expect(() => assertReaderMarkdownSafe(markdown)).toThrow(/Unicode|format|control|unsafe/iu);
+  });
+
+  it.each([
+    `https://example.org/ja\u200Bde`,
+    `https://example.org/ja\u00ADde`,
+    `https://example.org/jade?direction=\u202Esecret`,
+  ])('rejects Unicode format controls in a Markdown URL: %s', (url) => {
+    expect(() => assertReaderMarkdownSafe(`[source](${url})`)).toThrow(/Unicode|format|control|unsafe/iu);
   });
 });
 
@@ -168,6 +221,60 @@ describe('record prose safety is structural, not a blanket public-ID ban', () =>
       ...snapshot,
     })).toThrow(/private|sentinel/iu);
   });
+
+  it.each([
+    ['source volume', { sources: [{ ...validSource, volume: 'claim-secret' }] }],
+    ['source issue', { sources: [{ ...validSource, issue: 'research/claims/secret' }] }],
+    ['source pages', { sources: [{ ...validSource, pages: 'rights/private-pages' }] }],
+    ['source DOI', { sources: [{ ...validSource, doi: '10.1234/claim-secret' }] }],
+    ['source URL query', { sources: [{ ...validSource, url: 'https://example.org/jade?repo=agent-axiom%252Fyu-book' }] }],
+    ['source URL fragment', { sources: [{ ...validSource, url: 'https://example.org/jade#file=research%252Fclaims%252Fsecret' }] }],
+    ['source URL control', { sources: [{ ...validSource, url: 'https://example.org/jade%0Asecret' }] }],
+    ['media license URL', { media: [{ ...validDocumentaryMedia, licenseUrl: 'https://example.org/license?repo=agent-axiom%252Fyu-book' }] }],
+    ['media source URL', { media: [{ ...validDocumentaryMedia, sourceUrl: 'https://example.org/image#file=research%252Fclaims%252Fsecret' }] }],
+  ])('rejects a private or unsafe structured %s', (_label, snapshot) => {
+    expect(() => assertReaderProseFieldsSafe({
+      notes: [],
+      sources: [],
+      objects: [],
+      media: [],
+      ...snapshot,
+    })).toThrow(/private|sentinel|URL|unsafe|control/iu);
+  });
+
+  it.each([
+    ['source metadata', { sources: [{ ...validSource, volume: `4\u200B2` }] }],
+    ['object prose', { objects: [{ ...validObject, culture: `Han\u00ADChina` }] }],
+    ['media prose', { media: [{ ...validDocumentaryMedia, caption: `Jade\u202Esuit in a museum display.` }] }],
+    ['record URL', { sources: [{ ...validSource, url: `https://example.org/ja\u2066de` }] }],
+  ])('rejects a Unicode format control in %s', (_label, snapshot) => {
+    expect(() => assertReaderProseFieldsSafe({
+      notes: [],
+      sources: [],
+      objects: [],
+      media: [],
+      ...snapshot,
+    })).toThrow(/Unicode|format|control|unsafe/iu);
+  });
+
+  it('accepts complete safe scholarly source metadata and external URLs', () => {
+    expect(() => assertReaderProseFieldsSafe({
+      sources: [{
+        ...validSource,
+        containerTitle: 'Journal of Archaeological Science',
+        volume: '42',
+        issue: '3',
+        pages: '101–118',
+        doi: '10.1234/jade.2024.42',
+        url: 'https://example.org/research/claims/catalogue?edition=2#table-1',
+      }],
+      media: [{
+        ...validDocumentaryMedia,
+        licenseUrl: 'https://creativecommons.org/licenses/by/4.0/',
+        sourceUrl: 'https://museum.example/research/rights/catalogue',
+      }],
+    })).not.toThrow();
+  });
 });
 
 describe('release-layer sentinel scan', () => {
@@ -181,8 +288,6 @@ describe('release-layer sentinel scan', () => {
     'src/components/book/ObjectPassport.astro',
     'src/lib/book-release/example.ts',
     'src/styles/book.css',
-    'src/content/book-release/entries/prologue.md',
-    'public/images/book-release/leak.svg',
     'dist/book/index.html',
   ])('rejects a forbidden token planted in %s', async (path) => {
     const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-'));
@@ -199,6 +304,223 @@ describe('release-layer sentinel scan', () => {
     try {
       await writeLayerFile(root, 'src/pages/book/index.astro', '<main>Живой нефрит</main>');
       await writeLayerFile(root, 'dist/book/index.html', '<main>Живой нефрит</main>');
+      await expect(scanReaderReleaseLayers(root)).resolves.toBeUndefined();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts structural public IDs in non-reader-facing built markup', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-dist-'));
+    try {
+      await writeLayerFile(root, 'dist/book/index.html', [
+        '<main data-source-id="source-museum" data-object-id="object-jade-suit"',
+        ' data-media-id="media-jade-suit" data-entry-id="interlude-jade-immortality">',
+        '<p>Живой нефрит</p>',
+        '<a href="/yu/book/read/jade-immortality/#portal-jade-immortality">Читать</a>',
+        '</main>',
+      ].join(''));
+      await expect(scanReaderReleaseLayers(root)).resolves.toBeUndefined();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a private sentinel hidden in a built reader-facing URL', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-dist-url-'));
+    try {
+      await writeLayerFile(
+        root,
+        'dist/book/index.html',
+        '<a href="https://example.org/jade?repo=agent-axiom%252Fyu-book">Источник</a>',
+      );
+      await expect(scanReaderReleaseLayers(root)).rejects.toThrow(/private|sentinel|index\.html/iu);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['private ID split by inline emphasis', '<p>claim-<em>secret</em></p>'],
+    ['private path split by an inline span', '<p>resea<span>rch/claims/secret</span></p>'],
+    ['repository coordinate split by inline strong text', '<p>agent-axiom/<strong>yu-book</strong></p>'],
+  ])('rejects %s in the parsed visible text', async (_label, markup) => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-dist-visible-'));
+    try {
+      await writeLayerFile(root, 'dist/book/index.html', markup);
+      await expect(scanReaderReleaseLayers(root)).rejects.toThrow(/private|sentinel|prose|index\.html/iu);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['image alternative text', '<img src="/jade.webp" alt="claim-secret">'],
+    ['element title', '<span title="object-secret">Нефрит</span>'],
+    ['document title', '<title>media-secret</title><main>Нефрит</main>'],
+    ['ARIA label', '<button aria-label="source-secret"></button>'],
+    ['ARIA value text', '<input type="range" aria-valuetext="claim-secret">'],
+    ['ARIA role description', '<section aria-roledescription="object-secret">Нефрит</section>'],
+    ['ARIA placeholder', '<input aria-placeholder="source-secret">'],
+    ['button input value', '<input type="button" value="media-secret">'],
+    ['description metadata', '<meta name="description" content="interlude-secret"><main>Нефрит</main>'],
+    ['no-script fallback', '<noscript><p>claim-<em>secret</em></p></noscript>'],
+  ])('rejects a private ID in accessible %s', async (_label, markup) => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-dist-accessible-'));
+    try {
+      await writeLayerFile(root, 'dist/book/index.html', markup);
+      await expect(scanReaderReleaseLayers(root)).rejects.toThrow(/private|sentinel|prose|index\.html/iu);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps semantic block and line-break boundaries in parsed visible text', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-dist-boundaries-'));
+    try {
+      await writeLayerFile(root, 'dist/book/index.html', [
+        '<p>claim</p><p>-secret</p>',
+        '<div>research</div><div>/claims/secret</div>',
+        '<p>agent-axiom<br>/yu-book</p>',
+      ].join(''));
+      await expect(scanReaderReleaseLayers(root)).resolves.toBeUndefined();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('does not treat hidden structural IDs as reader-visible prose', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-dist-hidden-'));
+    try {
+      await writeLayerFile(root, 'dist/book/index.html', [
+        '<!-- claim-private-comment -->',
+        '<script>const ids = ["source-museum", "object-private-script"];</script>',
+        '<style>.claim-private-style { display: none }</style>',
+        '<template><span data-id="media-private-template">hidden</span></template>',
+        '<main><p>Живой нефрит</p></main>',
+      ].join(''));
+      await expect(scanReaderReleaseLayers(root)).resolves.toBeUndefined();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['HTML comment', 'dist/book/index.html', '<!-- agent-axiom/yu-book --><main>Нефрит</main>'],
+    ['compact repository comment', 'dist/book/index.html', '<!--agent-axiom/yu-book--><main>Нефрит</main>'],
+    ['compact private-path comment', 'dist/book/index.html', '<!--research/claims/secret--><main>Нефрит</main>'],
+    ['compact dangerous-scheme comment', 'dist/book/index.html', '<!--javascript:alert(1)--><main>Нефрит</main>'],
+    [
+      'JSON-LD script',
+      'dist/book/index.html',
+      '<script type="application/ld+json">{"path":"research/claims/secret"}</script><main>Нефрит</main>',
+    ],
+    ['template directive', 'dist/book/index.html', '<template>::private</template><main>Нефрит</main>'],
+    ['compact comment directive', 'dist/book/index.html', '<!--::private--><main>Нефрит</main>'],
+    ['compact block-comment directive', 'dist/book/runtime.js', '/*::private*/'],
+    ['compact line-comment directive', 'dist/book/runtime.js', '//::private'],
+    ['encoded runtime private path', 'dist/book/runtime.js', 'const path = "research%2Fclaims%2Fsecret";'],
+    [
+      'excessively nested runtime private path',
+      'dist/book/runtime.js',
+      `const path = "${nestedPercentEncoding('research/claims/secret', 9)}";`,
+    ],
+    [
+      'mixed nested runtime repository',
+      'dist/book/runtime.js',
+      `const repository = "${nestedPercentEncoding('agent-axiom&sol;yu-book', 9)}";`,
+    ],
+    ['invalid canonical UTF-8 run', 'dist/book/runtime.js', 'const malformed = "%FF";'],
+    ['stylesheet dangerous scheme', 'dist/book/styles.css', '.cover{background-image:url(javascript:alert(1))}'],
+    ['runtime Unicode format control', 'dist/book/runtime.js', `const label = "jade\u200Bsecret";`],
+  ])('rejects forbidden exact bytes in a built %s', async (_label, path, contents) => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-dist-bytes-'));
+    try {
+      await writeLayerFile(root, path, contents);
+      await expect(scanReaderReleaseLayers(root)).rejects.toThrow(/private|sentinel|directive|scheme|Unicode|format|control|index\.html|runtime\.js|styles\.css/iu);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('allows declared public IDs in downloadable text and binary payload bytes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-dist-public-'));
+    try {
+      await writeLayerFile(root, 'dist/book/runtime.js', [
+        'const ids = ["source-museum", "object-jade-suit", "media-jade-suit",',
+        '  "interlude-jade-immortality"];',
+      ].join('\n'));
+      await writeLayerFile(root, 'dist/book/catalogue.json', JSON.stringify({
+        sourceId: 'source-museum',
+        objectId: 'object-jade-suit',
+      }));
+      await writeLayerFile(root, 'dist/book/styles.css', [
+        '::selection{color:inherit}',
+        '@supports selector(::before){.jade::before{content:"safe"}}',
+      ].join(''));
+      const binaryPath = join(root, 'dist/book/jade.webp');
+      await mkdir(dirname(binaryPath), { recursive: true });
+      await writeFile(binaryPath, Buffer.concat([
+        Buffer.from([0x52, 0x49, 0x46, 0x46, 0xff, 0x00, 0x80]),
+        Buffer.from('source-museum', 'utf8'),
+      ]));
+      await expect(scanReaderReleaseLayers(root)).resolves.toBeUndefined();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['binary repository bytes', 'dist/book/jade.webp', 'agent-axiom/yu-book'],
+    ['unknown-extension encoded path bytes', 'dist/book/payload.opaque', 'research%2Fclaims%2Fsecret'],
+    ['font directive bytes', 'dist/book/jade.woff2', '::private'],
+  ])('rejects forbidden raw bytes in %s', async (_label, path, sentinel) => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-dist-raw-bytes-'));
+    try {
+      const absolutePath = join(root, path);
+      await mkdir(dirname(absolutePath), { recursive: true });
+      await writeFile(absolutePath, Buffer.concat([
+        Buffer.from([0x00, 0xff, 0x80]),
+        Buffer.from(sentinel, 'utf8'),
+        Buffer.from([0x00, 0xfe]),
+      ]));
+      await expect(scanReaderReleaseLayers(root)).rejects.toThrow(/private|sentinel|directive|bytes|webp|opaque|woff2/iu);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['percent-encoded path', 'src/layouts/Encoded.astro', 'const value = "research%2Fclaims%2Fsecret";'],
+    ['entity-encoded repository', 'src/pages/book/encoded.astro', 'const value = "agent-axiom&sol;yu-book";'],
+    ['NFKC path', 'src/components/book/Encoded.astro', 'const value = "ｒｅｓｅａｒｃｈ／ｃｌａｉｍｓ／secret";'],
+    ['zero-width space', 'src/lib/book-release/encoded.ts', `const value = "jade\u200Bsecret";`],
+    ['soft hyphen', 'src/styles/book.css', `.jade::after { content: "jade\u00ADsecret" }`],
+    ['encoded zero-width space', 'src/layouts/EncodedControl.astro', 'const value = "jade%E2%80%8Bsecret";'],
+    ['entity soft hyphen', 'src/pages/book/encoded-control.astro', 'const value = "jade&#xAD;secret";'],
+    [
+      'excessively nested path',
+      'src/lib/book-release/nested.ts',
+      `const value = "${nestedPercentEncoding('research/claims/secret', 9)}";`,
+    ],
+  ])('rejects canonical or Unicode-hidden runtime source sentinel: %s', async (_label, path, contents) => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-runtime-canonical-'));
+    try {
+      await writeLayerFile(root, path, contents);
+      await expect(scanReaderReleaseLayers(root)).rejects.toThrow(/private|sentinel|Unicode|format|control|canonical|encoded|book\.css/iu);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('allows source code that constructs policy tokens from separate safe literals', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-runtime-split-'));
+    try {
+      await writeLayerFile(root, 'src/lib/book-release/policy.ts', [
+        "const prefix = 'cl' + 'aim';",
+        "const privateRoot = 'resea' + 'rch';",
+        "const repository = 'agent-' + 'axiom/' + 'yu-' + 'book';",
+      ].join('\n'));
       await expect(scanReaderReleaseLayers(root)).resolves.toBeUndefined();
     } finally {
       await rm(root, { recursive: true, force: true });

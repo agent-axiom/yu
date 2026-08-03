@@ -7,6 +7,7 @@ import {
   rename,
   rm,
   symlink,
+  truncate,
   unlink,
   writeFile,
 } from 'node:fs/promises';
@@ -18,9 +19,12 @@ import {
   computeReaderPayloadDigest,
   computeReaderReleaseDigest,
   frameBytes,
+  verifyReaderReleaseIntegrity,
 } from '../src/lib/book-release/integrity';
 import { loadValidatedReaderRelease } from '../src/lib/book-release/load';
 import { EXPECTED_READER_ENTRY_ORDER } from '../src/lib/book-release/routes';
+import { readerReleaseManifestSchema } from '../src/lib/book-release/schemas';
+import { scanReaderReleaseLayers } from '../src/lib/book-release/validate';
 import {
   agentReviewDisclosure,
   reviewEvidenceCommit,
@@ -466,6 +470,30 @@ describe('validated reader release loading', () => {
     });
   });
 
+  it('accepts a fully valid layer bundle with structural public IDs and sentinel-like binary bytes', async () => {
+    await withRelease(async (release) => {
+      await writeFile(release.imagePath, Buffer.from('RIFF\0claim-private-layer\0\xff', 'latin1'));
+      await rebindManifest(release.root);
+      await expect(scanReaderReleaseLayers(release.root)).resolves.toBeUndefined();
+    });
+  });
+
+  it('rejects a private sentinel planted in strict-loaded generated prose', async () => {
+    await withRelease(async (release) => {
+      const raw = await readFile(release.entryPaths.prologue, 'utf8');
+      await writeFile(release.entryPaths.prologue, `${raw}\nclaim-private-layer\n`);
+      await rebindManifest(release.root);
+      await expect(scanReaderReleaseLayers(release.root)).rejects.toThrow(/private|sentinel|prose/iu);
+    });
+  });
+
+  it('uses byte integrity rather than text scanning for a planted binary mutation', async () => {
+    await withRelease(async (release) => {
+      await writeFile(release.imagePath, Buffer.from('claim-private-layer', 'utf8'));
+      await expect(scanReaderReleaseLayers(release.root)).rejects.toThrow(/SHA|digest|byte length/iu);
+    });
+  });
+
   it('keeps a project without generated roots buildable', async () => {
     const root = await mkdtemp(join(tmpdir(), 'yu-reader-empty-'));
     try {
@@ -616,6 +644,39 @@ describe('validated reader release loading', () => {
       await expect(loadValidatedReaderRelease(release.root)).rejects.toThrow(/UTF-8|encoding/iu);
     });
   });
+
+  it('rejects mutation of an early file while a later 128 MiB file read is in flight', async () => {
+    await withRelease(async (release) => {
+      const latePath = 'public/images/book-release/zzzz-race.webp';
+      const lateAbsolutePath = join(release.root, latePath);
+      await writePayload(release.root, latePath, new Uint8Array());
+      await truncate(lateAbsolutePath, 128 * 1024 * 1024);
+      const manifestJson = await rebindManifest(release.root, (manifest) => {
+        (manifest.files as Array<JsonObject>).push({
+          path: latePath,
+          kind: 'binary',
+          byteLength: 0,
+          sha256: '0'.repeat(64),
+        });
+        (manifest.files as Array<JsonObject>).sort((left, right) =>
+          compareCodeUnits(left.path as string, right.path as string));
+      });
+      const manifest = readerReleaseManifestSchema.parse(manifestJson);
+      let mutatedDuringLaterRead = false;
+
+      const verification = verifyReaderReleaseIntegrity(release.root, manifest, {
+        onFileReadStarted: async (path: string) => {
+          if (path !== latePath) return;
+          const earlyBytes = await readFile(release.imagePath);
+          earlyBytes[0] ^= 1;
+          await writeFile(release.imagePath, earlyBytes);
+          mutatedDuringLaterRead = true;
+        },
+      }).then(() => undefined);
+      await expect(verification).rejects.toThrow(/changed|identity|integrity/iu);
+      expect(mutatedDuringLaterRead).toBe(true);
+    });
+  }, 30_000);
 });
 
 describe('reader release relationship contract', () => {
@@ -687,6 +748,30 @@ describe('reader release relationship contract', () => {
     });
   });
 
+  it('does not accept an interlude return marker hidden inside inline code', async () => {
+    await withRelease(async (release) => {
+      const raw = await readFile(release.entryPaths.chapter, 'utf8');
+      const marker = '[Вернуться к главе](/book/read/chapter-04/#after-jade-immortality)';
+      await writeFile(release.entryPaths.chapter, raw.replace(marker, `\`${marker}\``));
+      await rebindManifest(release.root);
+      await expect(loadValidatedReaderRelease(release.root)).rejects.toThrow(/return|interlude|link/iu);
+    });
+  });
+
+  it.each([
+    ['note', 'prologue', '[1](#note-prologue)'],
+    ['object', 'chapter', '[Паспорт предмета](/book/objects/jade-suit/)'],
+    ['media', 'chapter', '[Изображение](/book/media/jade-suit/)'],
+  ] as const)('does not accept a declared %s relation hidden inside inline code', async (_label, entry, marker) => {
+    await withRelease(async (release) => {
+      const entryPath = release.entryPaths[entry];
+      const raw = await readFile(entryPath, 'utf8');
+      await writeFile(entryPath, raw.replace(marker, `\`${marker}\``));
+      await rebindManifest(release.root);
+      await expect(loadValidatedReaderRelease(release.root)).rejects.toThrow(/note|object|media|marker|link/iu);
+    });
+  });
+
   it('requires every declared object and media edge to have an exact structural marker', async () => {
     await withRelease(async (release) => {
       const raw = await readFile(release.entryPaths.chapter, 'utf8');
@@ -705,6 +790,41 @@ describe('reader release relationship contract', () => {
       await writeFile(release.entryPaths.prologue, `${raw}\n[Лишнее изображение](/book/media/extra-image/)\n`);
       await rebindManifest(release.root);
       await expect(loadValidatedReaderRelease(release.root)).rejects.toThrow(/media|undeclared|marker/iu);
+    });
+  });
+
+  it('rejects a dangling unknown note marker', async () => {
+    await withRelease(async (release) => {
+      const raw = await readFile(release.entryPaths.prologue, 'utf8');
+      await writeFile(release.entryPaths.prologue, `${raw}\n[Лишняя сноска](#note-dangling)\n`);
+      await rebindManifest(release.root);
+      await expect(loadValidatedReaderRelease(release.root)).rejects.toThrow(/note|dangling|undeclared|marker/iu);
+    });
+  });
+
+  it('rejects any extra reader route outside the exact portal/return relation', async () => {
+    await withRelease(async (release) => {
+      const raw = await readFile(release.entryPaths.prologue, 'utf8');
+      await writeFile(release.entryPaths.prologue, `${raw}\n[Лишний переход](/book/read/extra-chapter/)\n`);
+      await rebindManifest(release.root);
+      await expect(loadValidatedReaderRelease(release.root)).rejects.toThrow(/read|route|portal|return|undeclared/iu);
+    });
+  });
+
+  it.each([
+    ['encoded note hyphen', '#note%2Dmissing'],
+    ['encoded note name', '#%6eote-missing'],
+    ['encoded book root', '/%62ook/read/extra-chapter/'],
+    ['encoded read segment', '/book/%72ead/extra-chapter/'],
+    ['encoded object segment', '/book/%6fbjects/extra-object/'],
+    ['encoded media segment', '/book/%6dedia/extra-media/'],
+  ])('rejects a structural relation alias with %s', async (_label, destination) => {
+    await withRelease(async (release) => {
+      const raw = await readFile(release.entryPaths.prologue, 'utf8');
+      await writeFile(release.entryPaths.prologue, `${raw}\n[Лишняя связь](${destination})\n`);
+      await rebindManifest(release.root);
+      const validation = loadValidatedReaderRelease(release.root).then(() => undefined);
+      await expect(validation).rejects.toThrow(/note|object|media|read|route|relation|marker|undeclared|dangling/iu);
     });
   });
 

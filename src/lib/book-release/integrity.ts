@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import type { Stats } from 'node:fs';
 import { lstat, readdir, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { join, relative, resolve, sep } from 'node:path';
@@ -17,11 +18,27 @@ export type RawReaderReleaseFile = {
   bytes: Uint8Array;
 };
 
-type DirectoryIdentity = {
+type FilesystemIdentity = {
   path: string;
+  kind: 'file' | 'directory';
   dev: number;
   ino: number;
+  nlink: number;
+  size: number;
+  mtimeMs: number;
+  ctimeMs: number;
 };
+
+type IntegritySnapshot = {
+  files: readonly FilesystemIdentity[];
+  directories: readonly FilesystemIdentity[];
+};
+
+export type ReaderReleaseIntegrityObserver = {
+  onFileReadStarted?: (path: string) => void | Promise<void>;
+};
+
+const integritySnapshots = new WeakMap<RawReaderReleaseFile[], IntegritySnapshot>();
 
 function compareCodeUnits(left: string, right: string): number {
   const length = Math.min(left.length, right.length);
@@ -161,27 +178,75 @@ async function assertRegularSingleLink(path: string, label: string) {
   return metadata;
 }
 
-async function readStableRegularFile(path: string, label: string): Promise<Buffer> {
+function identityOf(
+  path: string,
+  kind: FilesystemIdentity['kind'],
+  metadata: Stats,
+): FilesystemIdentity {
+  return {
+    path,
+    kind,
+    dev: metadata.dev,
+    ino: metadata.ino,
+    nlink: metadata.nlink,
+    size: metadata.size,
+    mtimeMs: metadata.mtimeMs,
+    ctimeMs: metadata.ctimeMs,
+  };
+}
+
+function sameIdentity(left: FilesystemIdentity, right: FilesystemIdentity): boolean {
+  return left.kind === right.kind
+    && left.dev === right.dev
+    && left.ino === right.ino
+    && left.nlink === right.nlink
+    && left.size === right.size
+    && left.mtimeMs === right.mtimeMs
+    && left.ctimeMs === right.ctimeMs;
+}
+
+function retainDirectoryIdentity(
+  identities: Map<string, FilesystemIdentity>,
+  path: string,
+  metadata: Stats,
+): void {
+  const identity = identityOf(path, 'directory', metadata);
+  const retained = identities.get(path);
+  if (retained && !sameIdentity(retained, identity)) {
+    throw new Error(`reader release directory changed during traversal: ${path}`);
+  }
+  if (!retained) identities.set(path, identity);
+}
+
+async function readStableRegularFile(
+  path: string,
+  label: string,
+  observerPath: string,
+  observer?: ReaderReleaseIntegrityObserver,
+): Promise<{ bytes: Buffer; identity: FilesystemIdentity }> {
   const before = await assertRegularSingleLink(path, label);
-  const bytes = await readFile(path);
+  const pendingRead = readFile(path);
+  try {
+    await observer?.onFileReadStarted?.(observerPath);
+  } catch (error) {
+    await pendingRead.catch(() => undefined);
+    throw error;
+  }
+  const bytes = await pendingRead;
   const after = await assertRegularSingleLink(path, label);
-  if (before.dev !== after.dev
-    || before.ino !== after.ino
-    || before.size !== after.size
-    || before.mtimeMs !== after.mtimeMs
-    || before.ctimeMs !== after.ctimeMs
+  if (!sameIdentity(identityOf(path, 'file', before), identityOf(path, 'file', after))
     || bytes.byteLength !== after.size) {
     throw new Error(`${label} changed while its exact bytes were being read`);
   }
-  return bytes;
+  return { bytes, identity: identityOf(path, 'file', after) };
 }
 
 async function captureDirectoryChain(
   projectRoot: string,
   relativeDirectory: string,
   required: boolean,
-): Promise<DirectoryIdentity[]> {
-  const identities: DirectoryIdentity[] = [];
+  identities: Map<string, FilesystemIdentity>,
+): Promise<void> {
   let current = projectRoot;
   const segments = relativeDirectory ? relativeDirectory.split('/') : [];
   for (let index = -1; index < segments.length; index += 1) {
@@ -190,25 +255,29 @@ async function captureDirectoryChain(
     try {
       metadata = await lstat(current);
     } catch (error) {
-      if (!required && error instanceof Error && 'code' in error && error.code === 'ENOENT') return identities;
+      if (!required && error instanceof Error && 'code' in error && error.code === 'ENOENT') return;
       throw error;
     }
     if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
       throw new Error(`reader release directory must not be a symbolic link: ${current}`);
     }
-    identities.push({ path: current, dev: metadata.dev, ino: metadata.ino });
+    retainDirectoryIdentity(identities, current, metadata);
   }
-  return identities;
 }
 
-async function recheckDirectoryChain(identities: readonly DirectoryIdentity[]): Promise<void> {
+async function recheckIdentities(identities: readonly FilesystemIdentity[]): Promise<void> {
   for (const identity of identities) {
-    const metadata = await lstat(identity.path);
-    if (!metadata.isDirectory()
+    let metadata;
+    try {
+      metadata = await lstat(identity.path);
+    } catch (error) {
+      throw new Error(`reader release filesystem identity changed during validation: ${identity.path}`, { cause: error });
+    }
+    const expectedType = identity.kind === 'file' ? metadata.isFile() : metadata.isDirectory();
+    if (!expectedType
       || metadata.isSymbolicLink()
-      || metadata.dev !== identity.dev
-      || metadata.ino !== identity.ino) {
-      throw new Error(`reader release directory changed while bytes were being verified: ${identity.path}`);
+      || !sameIdentity(identity, identityOf(identity.path, identity.kind, metadata))) {
+      throw new Error(`reader release filesystem identity changed during validation: ${identity.path}`);
     }
   }
 }
@@ -217,7 +286,19 @@ async function collectTreeFiles(
   projectRoot: string,
   directory: string,
   files: string[],
+  directoryIdentities: Map<string, FilesystemIdentity>,
 ): Promise<void> {
+  let directoryMetadata;
+  try {
+    directoryMetadata = await lstat(directory);
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return;
+    throw error;
+  }
+  if (!directoryMetadata.isDirectory() || directoryMetadata.isSymbolicLink()) {
+    throw new Error(`reader release directory must not be a symbolic link: ${directory}`);
+  }
+  retainDirectoryIdentity(directoryIdentities, directory, directoryMetadata);
   let entries;
   try {
     entries = await readdir(directory, { withFileTypes: true });
@@ -231,7 +312,7 @@ async function collectTreeFiles(
     const metadata = await lstat(absolutePath);
     if (metadata.isSymbolicLink()) throw new Error(`reader release rejects symbolic link: ${absolutePath}`);
     if (metadata.isDirectory()) {
-      await collectTreeFiles(projectRoot, absolutePath, files);
+      await collectTreeFiles(projectRoot, absolutePath, files, directoryIdentities);
       continue;
     }
     if (!metadata.isFile()) throw new Error(`reader release requires regular files: ${absolutePath}`);
@@ -263,29 +344,50 @@ function sha256(bytes: Uint8Array): string {
 export async function verifyReaderReleaseIntegrity(
   root: string | URL,
   manifest: ReaderReleaseManifest,
+  observer?: ReaderReleaseIntegrityObserver,
 ): Promise<RawReaderReleaseFile[]> {
   const projectRoot = rootPath(root);
   const manifestPath = join(projectRoot, 'src/content/book-release/manifest.json');
-  const directoryIdentities = [
-    ...await captureDirectoryChain(projectRoot, 'src/content/book-release', true),
-    ...await captureDirectoryChain(projectRoot, 'public/images/book-release', false),
-  ];
-  await readStableRegularFile(manifestPath, 'reader release manifest');
+  const directoryIdentities = new Map<string, FilesystemIdentity>();
+  await captureDirectoryChain(projectRoot, 'src/content/book-release', true, directoryIdentities);
+  await captureDirectoryChain(projectRoot, 'public/images/book-release', false, directoryIdentities);
+  const manifestRead = await readStableRegularFile(
+    manifestPath,
+    'reader release manifest',
+    'src/content/book-release/manifest.json',
+    observer,
+  );
 
   const actualPaths: string[] = [];
-  await collectTreeFiles(projectRoot, join(projectRoot, 'src/content/book-release'), actualPaths);
-  await collectTreeFiles(projectRoot, join(projectRoot, 'public/images/book-release'), actualPaths);
+  await collectTreeFiles(
+    projectRoot,
+    join(projectRoot, 'src/content/book-release'),
+    actualPaths,
+    directoryIdentities,
+  );
+  await collectTreeFiles(
+    projectRoot,
+    join(projectRoot, 'public/images/book-release'),
+    actualPaths,
+    directoryIdentities,
+  );
   actualPaths.sort(compareCodeUnits);
   assertBijection(manifest.files, actualPaths);
 
   const files: RawReaderReleaseFile[] = [];
+  const fileIdentities: FilesystemIdentity[] = [manifestRead.identity];
   for (const descriptor of manifest.files) {
     const absolutePath = join(projectRoot, ...descriptor.path.split('/'));
     const pathFromRoot = relative(projectRoot, absolutePath);
     if (pathFromRoot.startsWith(`..${sep}`) || pathFromRoot === '..') {
       throw new Error(`reader payload traversal is forbidden: ${descriptor.path}`);
     }
-    const bytes = await readStableRegularFile(absolutePath, descriptor.path);
+    const { bytes, identity } = await readStableRegularFile(
+      absolutePath,
+      descriptor.path,
+      descriptor.path,
+      observer,
+    );
     if (descriptor.kind === 'text') {
       try {
         strictUtf8.decode(bytes);
@@ -300,6 +402,7 @@ export async function verifyReaderReleaseIntegrity(
       throw new Error(`${descriptor.path} SHA-256 does not match its descriptor`);
     }
     files.push({ path: descriptor.path, bytes });
+    fileIdentities.push(identity);
   }
 
   const payloadDigest = computeReaderPayloadDigest(files);
@@ -311,6 +414,20 @@ export async function verifyReaderReleaseIntegrity(
   if (releaseDigest !== manifest.reviewAttestation.contentBinding.digest) {
     throw new Error('reader release content-binding digest does not match exact bytes');
   }
-  await recheckDirectoryChain(directoryIdentities);
+  const snapshot: IntegritySnapshot = {
+    files: fileIdentities,
+    directories: [...directoryIdentities.values()],
+  };
+  integritySnapshots.set(files, snapshot);
+  await recheckVerifiedReaderRelease(files);
   return files;
+}
+
+export async function recheckVerifiedReaderRelease(
+  files: RawReaderReleaseFile[],
+): Promise<void> {
+  const snapshot = integritySnapshots.get(files);
+  if (!snapshot) throw new Error('reader release files do not carry a retained integrity snapshot');
+  await recheckIdentities(snapshot.files);
+  await recheckIdentities(snapshot.directories);
 }

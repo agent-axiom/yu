@@ -17,7 +17,10 @@
   },
   "dependencies": {
     "astro": "7.1.6",
+    "mdast-util-directive": "3.1.0",
     "mdast-util-from-markdown": "2.0.3",
+    "micromark-extension-directive": "4.0.0",
+    "parse5": "7.3.0",
     "zod": "4.4.3"
   },
   "devDependencies": {

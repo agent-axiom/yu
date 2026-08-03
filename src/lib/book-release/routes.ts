@@ -74,6 +74,15 @@ export function buildReaderRouteIndex(
   if (chapterLinks.filter((url) => url === returnDestination).length !== 1) {
     throw new Error('chapter must contain exactly one interlude return relation');
   }
+  const exactReaderRelations = new Set([portalDestination, returnDestination]);
+  for (const entry of entries) {
+    for (const url of readerMarkdownLinks(entry.body)) {
+      if (url.startsWith('/book/read/')
+        && (entry !== chapter || !exactReaderRelations.has(url))) {
+        throw new Error(`${entry.data.id} contains an undeclared reader route: ${url}`);
+      }
+    }
+  }
 
   return { ordered, byId, bySlug };
 }

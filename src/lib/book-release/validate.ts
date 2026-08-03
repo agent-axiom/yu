@@ -2,6 +2,9 @@ import { lstat, readdir, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { join, relative, resolve, sep } from 'node:path';
 import { fromMarkdown } from 'mdast-util-from-markdown';
+import { directiveFromMarkdown } from 'mdast-util-directive';
+import { directive } from 'micromark-extension-directive';
+import { parse, type DefaultTreeAdapterMap } from 'parse5';
 import {
   computeReadingMinutes,
   publicAnchorSchema,
@@ -33,6 +36,11 @@ type ReaderProseSnapshot = {
     readonly publisher: string;
     readonly locators: readonly string[];
     readonly containerTitle?: string;
+    readonly volume?: string;
+    readonly issue?: string;
+    readonly pages?: string;
+    readonly doi?: string;
+    readonly url?: string;
   }[];
   objects?: readonly {
     readonly title: string;
@@ -56,6 +64,8 @@ type ReaderProseSnapshot = {
     readonly caption: string;
     readonly credit: string;
     readonly license: string;
+    readonly licenseUrl: string;
+    readonly sourceUrl?: string;
     readonly author?: string;
     readonly changeNote?: string;
     readonly nondocumentaryDisclosure?: string;
@@ -83,6 +93,11 @@ const allowedMarkdownNodes = new Set([
   'link',
   'break',
 ]);
+const directiveNodeTypes = new Set(['textDirective', 'leafDirective', 'containerDirective']);
+const markdownDirectiveOptions = {
+  extensions: [directive()],
+  mdastExtensions: [directiveFromMarkdown()],
+};
 const privateRepositoryPattern = new RegExp(
   `(?:^|[^a-z0-9_%-])agent-axiom/${'yu' + '-book'}(?:\\.git)?(?=$|[^a-z0-9._%-])`,
   'iu',
@@ -90,6 +105,7 @@ const privateRepositoryPattern = new RegExp(
 const externalHttpsTokenPattern = /https:\/\/[^\s<>{}\[\]"'`()]+/giu;
 const percentRunPattern = /(?:%[0-9a-f]{2})+/giu;
 const securityEntityPattern = /&(?:#(?:x[0-9a-f]+|[0-9]+)|sol|bsol|num|percnt|colon|period|hyphen|minus|lowbar|commat);/giu;
+const residualSecurityEncodingPattern = /(?:%[0-9a-f]{2})|&(?:#(?:x[0-9a-f]+|[0-9]+)|sol|bsol|num|percnt|colon|period|hyphen|minus|lowbar|commat);/iu;
 const namedSecurityEntities: Readonly<Record<string, string>> = {
   colon: ':',
   sol: '/',
@@ -102,6 +118,19 @@ const namedSecurityEntities: Readonly<Record<string, string>> = {
   lowbar: '_',
   commat: '@',
 };
+
+/**
+ * Reader-facing text policy: reject every Unicode General_Category=Format
+ * code point. This includes U+200B, U+00AD and all bidi embedding, override
+ * and isolate controls; none is necessary for this Russian-language edition.
+ */
+const forbiddenUnicodeFormatControlPattern = /\p{Cf}/u;
+
+function assertNoForbiddenUnicodeFormatControls(value: string, label: string): void {
+  if (forbiddenUnicodeFormatControlPattern.test(value)) {
+    throw new Error(`${label} contains a forbidden Unicode format or bidi control`);
+  }
+}
 
 function decodeSecurityEntities(value: string): string {
   return value.replace(securityEntityPattern, (entity) => {
@@ -143,7 +172,7 @@ function canonicalSecurityValue(value: string): string {
     if (next === current) return next;
     current = next;
   }
-  if (/(?:%[0-9a-f]{2})|&(?:#|sol;|bsol;|num;|percnt;|colon;|period;|hyphen;|minus;|lowbar;|commat;)/iu.test(current)) {
+  if (residualSecurityEncodingPattern.test(current)) {
     throw new Error('reader text contains excessive nested canonical encoding');
   }
   return current;
@@ -188,7 +217,9 @@ function hasPrivatePath(value: string, normalizeBackslashes = true): boolean {
 }
 
 function privateSentinel(value: string): string | null {
+  assertNoForbiddenUnicodeFormatControls(value, 'reader text');
   const canonical = canonicalSecurityValue(value);
+  assertNoForbiddenUnicodeFormatControls(canonical, 'decoded reader text');
   if (privateRepositoryPattern.test(canonicalizeRepositoryScanValue(canonical))) {
     return 'private repository coordinate';
   }
@@ -198,11 +229,14 @@ function privateSentinel(value: string): string | null {
 }
 
 function runtimeSourceSentinel(value: string): string | null {
-  if (privateRepositoryPattern.test(canonicalizeRepositoryScanValue(value, false))) {
+  if (forbiddenUnicodeFormatControlPattern.test(value)) return 'Unicode format control';
+  const canonical = canonicalSecurityValue(value);
+  if (forbiddenUnicodeFormatControlPattern.test(canonical)) return 'decoded Unicode format control';
+  if (privateRepositoryPattern.test(canonicalizeRepositoryScanValue(canonical, false))) {
     return 'private repository coordinate';
   }
-  if (privateIdPattern.test(value)) return 'private-prefixed identifier';
-  if (hasPrivatePath(value, false)) return 'private repository path';
+  if (privateIdPattern.test(canonical)) return 'private-prefixed identifier';
+  if (hasPrivatePath(canonical, false)) return 'private repository path';
   return null;
 }
 
@@ -216,7 +250,8 @@ function safeNeutralSlug(value: string): boolean {
   return !prefixNames.some((prefix) => value.startsWith(`${prefix}-`));
 }
 
-function assertSafeReaderUrl(input: string): void {
+function assertSafeReaderUrl(input: string): string {
+  assertNoForbiddenUnicodeFormatControls(input, 'reader URL');
   if (!input
     || /[\u0000-\u001f\u007f-\u009f\s]/u.test(input)
     || input.includes('\\')
@@ -224,6 +259,7 @@ function assertSafeReaderUrl(input: string): void {
     throw new Error(`unsafe reader URL controls or whitespace: ${input}`);
   }
   const value = canonicalSecurityValue(input);
+  assertNoForbiddenUnicodeFormatControls(value, 'decoded reader URL');
   if (/[\u0000-\u001f\u007f-\u009f\s]/u.test(value) || value.includes('\\')) {
     throw new Error(`unsafe decoded reader URL controls or whitespace: ${input}`);
   }
@@ -232,10 +268,10 @@ function assertSafeReaderUrl(input: string): void {
     if (!publicAnchorSchema.safeParse(value.slice(1)).success) {
       throw new Error(`unsafe reader anchor URL: ${input}`);
     }
-    return;
+    return value;
   }
   if (value === '/book/' || /^\/book\/(?:prologue|virtue-immortality|jade-immortality|sources)\/$/u.test(value)) {
-    return;
+    return value;
   }
   if (value.startsWith('/book/')) {
     if (value.includes('?') || value.includes('..') || value.includes('//')) {
@@ -245,7 +281,7 @@ function assertSafeReaderUrl(input: string): void {
     if (!match?.[1] || !safeNeutralSlug(match[1])) {
       throw new Error(`unsafe internal reader route: ${input}`);
     }
-    return;
+    return value;
   }
   let url: URL;
   try {
@@ -256,6 +292,7 @@ function assertSafeReaderUrl(input: string): void {
   if (url.protocol !== 'https:' || url.username || url.password || value.startsWith('//')) {
     throw new Error(`unsafe reader URL scheme or credentials: ${input}`);
   }
+  return value;
 }
 
 function visitMarkdown(node: unknown, visitor: (node: MarkdownNode) => void): void {
@@ -343,12 +380,23 @@ function controlTextAndCodeSpans(
 
 type DirectiveMatch = { syntax: string; start: number; end: number };
 
-function directiveMatches(value: string): DirectiveMatch[] {
+function directiveMatches(value: string, inlineCodeEnds: ReadonlySet<number> = new Set()): DirectiveMatch[] {
   const matches: DirectiveMatch[] = [];
-  for (const match of value.matchAll(/::[a-z][a-z0-9-]*\{[^{}\r\n]*\}/giu)) {
+  const pattern = /(:{3}|:{2}|:)([a-z][a-z0-9-]*)(\[[^\]\r\n]*\])?(\{[^{}\r\n]*\})?/giu;
+  for (const match of value.matchAll(pattern)) {
     const start = match.index ?? 0;
     const preceding = start > 0 ? value[start - 1] : undefined;
     if (preceding === '\\' || preceding === ':') continue;
+    const colonCount = match[1]!.length;
+    const hasLabel = match[3] !== undefined;
+    const hasAttributes = match[4] !== undefined;
+    const atLineStart = start === 0 || preceding === '\n' || preceding === '\r';
+    if (colonCount === 1 && !hasLabel) continue;
+    if (colonCount >= 2
+      && !hasLabel
+      && !hasAttributes
+      && !atLineStart
+      && !inlineCodeEnds.has(start)) continue;
     const syntax = match[0];
     matches.push({ syntax, start, end: start + syntax.length });
   }
@@ -373,25 +421,35 @@ function sameDirectiveMultiset(first: readonly DirectiveMatch[], second: readonl
 
 function hasResidualDirectiveOutsideCode(node: MarkdownNode, source: string): boolean {
   const { text, unmarkedText, spans } = controlTextAndCodeSpans(node, source);
-  const markedMatches = directiveMatches(text);
+  const codeEnds = new Set(spans.map((span) => span.end));
+  const markedMatches = directiveMatches(text, codeEnds);
   for (const match of markedMatches) {
     if (!spans.some((span) => span.start <= match.start && match.end <= span.end)) return true;
   }
-  return !sameDirectiveMultiset(directiveMatches(unmarkedText), markedMatches);
+  return !sameDirectiveMultiset(directiveMatches(unmarkedText, codeEnds), markedMatches);
+}
+
+function parseReaderMarkdown(markdown: string) {
+  return fromMarkdown(markdown, markdownDirectiveOptions);
 }
 
 export function readerMarkdownLinks(markdown: string): string[] {
   const links: string[] = [];
-  visitMarkdown(fromMarkdown(markdown), (node) => {
-    if (node.type === 'link' && typeof node.url === 'string') links.push(node.url);
+  visitMarkdown(parseReaderMarkdown(markdown), (node) => {
+    if (node.type === 'link' && typeof node.url === 'string') links.push(assertSafeReaderUrl(node.url));
   });
   return links;
 }
 
 export function assertReaderMarkdownSafe(markdown: string): void {
   assertNoPrivateSentinel(markdown, 'reader Markdown');
-  const tree = fromMarkdown(markdown);
+  const tree = parseReaderMarkdown(markdown);
   visitMarkdown(tree, (node) => {
+    if (node.type && directiveNodeTypes.has(node.type)) {
+      const start = node.position?.start?.offset;
+      if (typeof start === 'number' && markdown.slice(Math.max(0, start - 2), start) === '\\:') return;
+      throw new Error('residual Markdown directives are forbidden outside code');
+    }
     if (!node.type || !allowedMarkdownNodes.has(node.type)) {
       throw new Error(`unsupported reader Markdown node: ${node.type ?? 'unknown'}`);
     }
@@ -423,6 +481,10 @@ function proseValues(snapshot: ReaderProseSnapshot): string[] {
   for (const source of snapshot.sources ?? []) {
     values.push(...source.authors, source.title, source.publisher, ...source.locators);
     if (source.containerTitle) values.push(source.containerTitle);
+    if (source.volume) values.push(source.volume);
+    if (source.issue) values.push(source.issue);
+    if (source.pages) values.push(source.pages);
+    if (source.doi) values.push(source.doi);
   }
   for (const object of snapshot.objects ?? []) {
     values.push(
@@ -451,8 +513,21 @@ function proseValues(snapshot: ReaderProseSnapshot): string[] {
   return values;
 }
 
+function readerUrlValues(snapshot: ReaderProseSnapshot): string[] {
+  const values: string[] = [];
+  for (const source of snapshot.sources ?? []) {
+    if (source.url) values.push(source.url);
+  }
+  for (const media of snapshot.media ?? []) {
+    values.push(media.licenseUrl);
+    if (media.sourceUrl) values.push(media.sourceUrl);
+  }
+  return values;
+}
+
 export function assertReaderProseFieldsSafe(snapshot: ReaderProseSnapshot): void {
   for (const value of proseValues(snapshot)) assertNoPrivateSentinel(value, 'reader prose field');
+  for (const value of readerUrlValues(snapshot)) assertSafeReaderUrl(value);
 }
 
 function uniqueRecordMap<T extends { id: string }>(records: readonly T[], label: string): Map<string, T> {
@@ -528,6 +603,9 @@ export function validateReaderReleaseGraph(release: LoadedReaderRelease): void {
     for (const url of links) {
       if (!url.startsWith('#')) continue;
       const linkedNote = noteByAnchor.get(url.slice(1));
+      if (url.startsWith('#note-') && !linkedNote) {
+        throw new Error(`${entry.data.id} contains a dangling note marker: ${url}`);
+      }
       if (linkedNote && !entry.data.noteIds.includes(linkedNote.id)) {
         throw new Error(`${entry.data.id} contains an undeclared note marker: ${linkedNote.id}`);
       }
@@ -592,48 +670,316 @@ export function validateReaderReleaseGraph(release: LoadedReaderRelease): void {
   assertReaderProseFieldsSafe(release);
 }
 
-const scanRoots = [
+const runtimeScanRoots = [
   'src/layouts',
   'src/pages/book',
   'src/components/book',
   'src/lib/book-release',
   'src/styles/book.css',
-  'src/content/book-release',
-  'public/images/book-release',
-  'dist/book',
 ] as const;
+const builtReaderRoot = 'dist/book';
+const builtTextExtensions = /\.(?:cjs|css|csv|html?|js|json|map|md|mjs|svg|txt|webmanifest|xml)$/iu;
+const builtHtmlExtensions = /\.(?:html?|svg|xml)$/iu;
+const builtPlainProseExtensions = /\.(?:csv|md|txt)$/iu;
+const builtUrlAttributeNames = new Set(['action', 'cite', 'formaction', 'href', 'poster', 'src']);
+const builtAccessibleTextAttributeNames = new Set([
+  'alt',
+  'aria-description',
+  'aria-label',
+  'aria-placeholder',
+  'aria-roledescription',
+  'aria-valuetext',
+  'placeholder',
+  'title',
+]);
+const builtPublicMetadataNames = new Set([
+  'description',
+  'og:description',
+  'og:title',
+  'twitter:description',
+  'twitter:title',
+]);
+const builtHiddenTextElements = new Set(['script', 'style', 'template']);
+const builtBlockElements = new Set([
+  'address',
+  'article',
+  'aside',
+  'blockquote',
+  'body',
+  'caption',
+  'dd',
+  'details',
+  'dialog',
+  'div',
+  'dl',
+  'dt',
+  'fieldset',
+  'figcaption',
+  'figure',
+  'footer',
+  'form',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'head',
+  'header',
+  'hgroup',
+  'hr',
+  'li',
+  'main',
+  'menu',
+  'nav',
+  'ol',
+  'option',
+  'optgroup',
+  'p',
+  'pre',
+  'section',
+  'summary',
+  'table',
+  'tbody',
+  'td',
+  'tfoot',
+  'th',
+  'thead',
+  'title',
+  'tr',
+  'ul',
+]);
+const exactArtifactDirectivePattern = /(?::{2,3}[a-z][a-z0-9-]*(?:\[[^\]\r\n]*\])?(?:\{[^{}\r\n]*\})?|:[a-z][a-z0-9-]*\[[^\]\r\n]*\](?:\{[^{}\r\n]*\})?)/iu;
+const standardCssPseudoElementPattern = /::(?:after|backdrop|before|cue(?:-region)?|file-selector-button|first-letter|first-line|grammar-error|marker|part|placeholder|selection|slotted|spelling-error|target-text|view-transition(?:-group|-image-pair|-new|-old)?)(?![a-z0-9-])/giu;
+const dangerousArtifactSchemePattern = /(?:^|[^a-z0-9+.-])(?:data|file|javascript|vbscript):/iu;
+const strictUtf8 = new TextDecoder('utf-8', { fatal: true });
+
+type HtmlNode = DefaultTreeAdapterMap['node'];
+type HtmlParentNode = DefaultTreeAdapterMap['parentNode'];
+type HtmlElement = DefaultTreeAdapterMap['element'];
+type HtmlTextNode = DefaultTreeAdapterMap['textNode'];
+
+function isHtmlElement(node: HtmlNode): node is HtmlElement {
+  return 'tagName' in node && 'attrs' in node;
+}
+
+function isHtmlTextNode(node: HtmlNode): node is HtmlTextNode {
+  return node.nodeName === '#text' && 'value' in node;
+}
+
+function isHtmlParentNode(node: HtmlNode): node is HtmlParentNode {
+  return 'childNodes' in node;
+}
 
 function rootPath(input: string | URL): string {
   return resolve(input instanceof URL ? fileURLToPath(input) : input);
 }
 
-async function scanPath(projectRoot: string, path: string): Promise<void> {
+async function pathMetadata(path: string) {
   let metadata;
   try {
     metadata = await lstat(path);
   } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return;
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return null;
     throw error;
   }
+  return metadata;
+}
+
+async function scanRuntimePath(projectRoot: string, path: string): Promise<void> {
+  const metadata = await pathMetadata(path);
+  if (!metadata) return;
   const relativePath = relative(projectRoot, path).split(sep).join('/');
   if (metadata.isSymbolicLink()) throw new Error(`release-layer scan rejects symbolic link: ${relativePath}`);
   if (metadata.isDirectory()) {
     const names = await readdir(path);
-    for (const name of names) await scanPath(projectRoot, join(path, name));
+    for (const name of names) await scanRuntimePath(projectRoot, join(path, name));
     return;
   }
   if (!metadata.isFile()) throw new Error(`release-layer scan requires regular files: ${relativePath}`);
   const contents = (await readFile(path)).toString('utf8');
-  const isRuntimeSource = relativePath.startsWith('src/layouts/')
-    || relativePath.startsWith('src/pages/book/')
-    || relativePath.startsWith('src/components/book/')
-    || relativePath.startsWith('src/lib/book-release/')
-    || relativePath === 'src/styles/book.css';
-  const sentinel = isRuntimeSource ? runtimeSourceSentinel(contents) : privateSentinel(contents);
+  let sentinel: string | null;
+  try {
+    sentinel = runtimeSourceSentinel(contents);
+  } catch (error) {
+    throw new Error(`${relativePath} contains invalid canonical security text`, { cause: error });
+  }
   if (sentinel) throw new Error(`${relativePath} contains a forbidden private sentinel (${sentinel})`);
+}
+
+function assertBuiltReaderUrlSafe(value: string, relativePath: string): void {
+  assertNoForbiddenUnicodeFormatControls(value, `${relativePath} reader-facing URL`);
+  const canonical = canonicalSecurityValue(value);
+  assertNoForbiddenUnicodeFormatControls(canonical, `${relativePath} decoded reader-facing URL`);
+  if (/[\u0000-\u001f\u007f-\u009f\s]/u.test(canonical) || canonical.includes('\\')) {
+    throw new Error(`${relativePath} contains an unsafe reader-facing URL`);
+  }
+  const sentinel = privateSentinel(canonical);
+  if (sentinel) throw new Error(`${relativePath} contains a forbidden private URL sentinel (${sentinel})`);
+  if (/^(?:data|file|javascript|vbscript):/iu.test(canonical) || canonical.startsWith('//')) {
+    throw new Error(`${relativePath} contains an unsafe reader-facing URL scheme`);
+  }
+}
+
+function tolerantArtifactCanonicalValue(value: string): { value: string; excessive: boolean } {
+  const decode = (input: string) => {
+    const decodedPercent = input.replace(percentRunPattern, (run) => {
+      try {
+        return decodePercentRuns(run);
+      } catch {
+        return run;
+      }
+    });
+    return decodedPercent.replace(securityEntityPattern, (entity) => {
+      try {
+        return decodeSecurityEntities(entity);
+      } catch {
+        return entity;
+      }
+    }).normalize('NFKC');
+  };
+  let current = value.normalize('NFKC');
+  for (let depth = 0; depth < 8; depth += 1) {
+    const decoded = decode(current);
+    if (decoded === current) return { value: current, excessive: false };
+    current = decoded;
+  }
+  return { value: current, excessive: decode(current) !== current };
+}
+
+function exactArtifactSentinel(value: string, strictCanonical: boolean): string | null {
+  if (forbiddenUnicodeFormatControlPattern.test(value)) return 'Unicode format control';
+  const artifactCanonical = strictCanonical
+    ? { value: canonicalSecurityValue(value), excessive: false }
+    : tolerantArtifactCanonicalValue(value);
+  const canonical = artifactCanonical.value;
+  if (artifactCanonical.excessive) return 'excessive nested canonical encoding';
+  if (forbiddenUnicodeFormatControlPattern.test(canonical)) return 'decoded Unicode format control';
+  const structuralScanValue = canonical.replace(/<!--|-->|\/\*|\*\//gu, ' ');
+  if (privateRepositoryPattern.test(canonicalizeRepositoryScanValue(structuralScanValue))) {
+    return 'private repository coordinate';
+  }
+  if (hasPrivatePath(structuralScanValue)) return 'private repository path';
+  if (exactArtifactDirectivePattern.test(canonical.replace(standardCssPseudoElementPattern, ' '))) {
+    return 'raw directive';
+  }
+  if (dangerousArtifactSchemePattern.test(structuralScanValue)) return 'dangerous URL scheme';
+  return null;
+}
+
+function scanBuiltTextArtifact(contents: string, relativePath: string, strictCanonical: boolean): void {
+  let sentinel: string | null;
+  try {
+    sentinel = exactArtifactSentinel(contents, strictCanonical);
+  } catch (error) {
+    throw new Error(`${relativePath} contains invalid canonical security text`, { cause: error });
+  }
+  if (sentinel) throw new Error(`${relativePath} contains forbidden exact bytes (${sentinel})`);
+}
+
+function parsedBuiltReaderDocument(contents: string): {
+  visibleText: string;
+  accessibleText: string[];
+  urls: string[];
+} {
+  const text: string[] = [];
+  const accessibleText: string[] = [];
+  const urls: string[] = [];
+  const boundary = () => {
+    if (text.length > 0 && !text.at(-1)?.endsWith('\n')) text.push('\n');
+  };
+  const collectUrlAttributes = (element: HtmlElement) => {
+    for (const attribute of element.attrs) {
+      if (builtUrlAttributeNames.has(attribute.name.toLowerCase())) urls.push(attribute.value);
+    }
+  };
+  const visit = (node: HtmlNode): void => {
+    if (isHtmlTextNode(node)) {
+      text.push(node.value);
+      return;
+    }
+    if (!isHtmlElement(node)) {
+      if (isHtmlParentNode(node)) {
+        for (const child of node.childNodes) visit(child);
+      }
+      return;
+    }
+    collectUrlAttributes(node);
+    const tagName = node.tagName.toLowerCase();
+    if (builtHiddenTextElements.has(tagName)) return;
+    const attributes = new Map(node.attrs.map((attribute) => [attribute.name.toLowerCase(), attribute.value]));
+    for (const attribute of node.attrs) {
+      if (builtAccessibleTextAttributeNames.has(attribute.name.toLowerCase())) {
+        accessibleText.push(attribute.value);
+      }
+    }
+    if (tagName === 'input' && attributes.get('type')?.toLowerCase() !== 'hidden') {
+      const value = attributes.get('value');
+      if (value !== undefined) accessibleText.push(value);
+    }
+    if (tagName === 'meta') {
+      const metadataName = (attributes.get('name') ?? attributes.get('property'))?.toLowerCase();
+      const content = attributes.get('content');
+      if (metadataName && builtPublicMetadataNames.has(metadataName) && content !== undefined) {
+        accessibleText.push(content);
+      }
+    }
+    if (tagName === 'br') {
+      boundary();
+      return;
+    }
+    const isBlock = builtBlockElements.has(tagName);
+    if (isBlock) boundary();
+    for (const child of node.childNodes) visit(child);
+    if (isBlock) boundary();
+  };
+  visit(parse(contents, { scriptingEnabled: false }));
+  return { visibleText: text.join(''), accessibleText, urls };
+}
+
+function scanBuiltReaderDocument(contents: string, relativePath: string): void {
+  const { visibleText, accessibleText, urls } = parsedBuiltReaderDocument(contents);
+  for (const url of urls) assertBuiltReaderUrlSafe(url, relativePath);
+  for (const prose of [visibleText, ...accessibleText]) {
+    const sentinel = privateSentinel(prose);
+    if (sentinel) throw new Error(`${relativePath} contains a forbidden private prose sentinel (${sentinel})`);
+  }
+}
+
+async function scanBuiltPath(projectRoot: string, path: string): Promise<void> {
+  const metadata = await pathMetadata(path);
+  if (!metadata) return;
+  const relativePath = relative(projectRoot, path).split(sep).join('/');
+  if (metadata.isSymbolicLink()) throw new Error(`release-layer scan rejects symbolic link: ${relativePath}`);
+  if (metadata.isDirectory()) {
+    const names = await readdir(path);
+    for (const name of names) await scanBuiltPath(projectRoot, join(path, name));
+    return;
+  }
+  if (!metadata.isFile()) throw new Error(`release-layer scan requires regular files: ${relativePath}`);
+  const bytes = await readFile(path);
+  scanBuiltTextArtifact(bytes.toString('utf8'), relativePath, false);
+  if (!builtTextExtensions.test(relativePath)) return;
+  let contents: string;
+  try {
+    contents = strictUtf8.decode(bytes);
+  } catch (error) {
+    throw new Error(`${relativePath} is not valid UTF-8 reader output`, { cause: error });
+  }
+  scanBuiltTextArtifact(contents, relativePath, true);
+  if (builtHtmlExtensions.test(relativePath)) scanBuiltReaderDocument(contents, relativePath);
+  if (builtPlainProseExtensions.test(relativePath)) {
+    const sentinel = privateSentinel(contents);
+    if (sentinel) throw new Error(`${relativePath} contains a forbidden private prose sentinel (${sentinel})`);
+  }
 }
 
 export async function scanReaderReleaseLayers(root: string | URL): Promise<void> {
   const projectRoot = rootPath(root);
-  for (const path of scanRoots) await scanPath(projectRoot, join(projectRoot, ...path.split('/')));
+  for (const path of runtimeScanRoots) {
+    await scanRuntimePath(projectRoot, join(projectRoot, ...path.split('/')));
+  }
+  const { loadValidatedReaderRelease } = await import('./load');
+  await loadValidatedReaderRelease(projectRoot);
+  await scanBuiltPath(projectRoot, join(projectRoot, ...builtReaderRoot.split('/')));
 }
