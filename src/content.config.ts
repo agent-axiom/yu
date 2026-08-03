@@ -7,6 +7,8 @@ import {
   readerObjectSchema,
   readerReleaseManifestSchema,
   readerSourceSchema,
+  withReaderEntryValidation,
+  withReaderManifestValidation,
 } from './lib/book-release/schemas';
 
 const citations = z.array(z.string()).min(1);
@@ -80,12 +82,12 @@ const medicine = defineCollection({
 });
 
 const bookManifest = defineCollection({
-  loader: glob({ pattern: 'manifest.json', base: './src/content/book-release' }),
+  loader: withReaderManifestValidation(glob({ pattern: 'manifest.json', base: './src/content/book-release' })),
   schema: readerReleaseManifestSchema,
 });
 
 const bookEntries = defineCollection({
-  loader: glob({ pattern: '*.md', base: './src/content/book-release/entries' }),
+  loader: withReaderEntryValidation(glob({ pattern: '*.md', base: './src/content/book-release/entries' })),
   schema: readerEntrySchema,
 });
 

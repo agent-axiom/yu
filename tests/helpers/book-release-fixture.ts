@@ -112,6 +112,20 @@ export const validGenerativeMedia = {
   nondocumentaryDisclosure: 'Недокументальная визуализация: изображение не является историческим свидетельством.',
 } as const;
 
+export const validBinaryFileDescriptor = {
+  path: 'public/images/book-release/han-jade-suit.webp',
+  kind: 'binary',
+  byteLength: 1024,
+  sha256: 'e'.repeat(64),
+} as const;
+
+export const validEntryFileDescriptor = {
+  path: 'src/content/book-release/entries/chapter-04.md',
+  kind: 'text',
+  byteLength: 4096,
+  sha256: 'f'.repeat(64),
+} as const;
+
 export const validManifest = {
   version: 4,
   projection: 'reader-v1',
@@ -124,19 +138,20 @@ export const validManifest = {
   readingOrder: ['chapter-04'],
   counts: { entries: 1, notes: 1, sources: 1, objects: 1, media: 3 },
   files: [
-    ['src/content/book-release/entries/chapter-04.md', 'text'],
+    validBinaryFileDescriptor,
+    validEntryFileDescriptor,
     ['src/content/book-release/media/media-han-jade-suit.json', 'text'],
     ['src/content/book-release/media/media-nephrite-fibre.json', 'text'],
     ['src/content/book-release/media/media-site-context.json', 'text'],
     ['src/content/book-release/notes/note-001.json', 'text'],
     ['src/content/book-release/objects/object-han-jade-suit.json', 'text'],
     ['src/content/book-release/sources/source-henan-museum.json', 'text'],
-  ].map(([path, kind], index) => ({
-    path,
-    kind,
+  ].map((file, index) => Array.isArray(file) ? ({
+    path: file[0],
+    kind: file[1],
     byteLength: 100 + index,
     sha256: `${index}`.repeat(64),
-  })),
+  }) : file),
   reviewAttestation: {
     schemaVersion: 3,
     reviewMode: 'ai-agent-panel',

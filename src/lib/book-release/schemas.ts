@@ -1,4 +1,7 @@
-import { posix } from 'node:path';
+import { existsSync, readdirSync } from 'node:fs';
+import { isAbsolute, posix, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import type { DataStore, Loader, LoaderContext } from 'astro/loaders';
 import { z } from 'zod';
 
 export const AGENT_REVIEW_DISCLOSURE =
@@ -16,24 +19,30 @@ const fortyCharLowerHexSchema = z.string().regex(/^[0-9a-f]{40}$/u);
 const sha256HexSchema = z.string().regex(/^[0-9a-f]{64}$/u);
 const safeCycleIdSchema = z.string().regex(/^cycle-(?:0[1-9]|[1-9][0-9])$/u);
 
-function repeatedlyDecodeUrlComponent(value: string): string | null {
-  let decoded = value;
-  for (let pass = 0; pass < 8; pass += 1) {
+type PrivateRepositoryScan = 'safe' | 'private' | 'invalid';
+
+function scanPrivateRepositoryReference(value: string): PrivateRepositoryScan {
+  let current = value;
+  let successfulDecodes = 0;
+  while (true) {
+    if (containsPrivateRepositoryPair(current)) return 'private';
     let next: string;
     try {
-      next = decodeURIComponent(decoded);
+      next = decodeURIComponent(current);
     } catch {
-      return null;
+      if (successfulDecodes === 0) return 'invalid';
+      return /%[0-9a-f]{2}/iu.test(current) ? 'invalid' : 'safe';
     }
-    if (next === decoded) return next;
-    decoded = next;
+    if (next === current) return 'safe';
+    if (successfulDecodes >= 8) return 'invalid';
+    current = next;
+    successfulDecodes += 1;
   }
-  return null;
 }
 
 function containsPrivateRepositoryPair(value: string): boolean {
   const canonical = value.toLowerCase().replace(/\\/gu, '/').replace(/\/+/gu, '/');
-  return /(?:^|[^a-z0-9-])agent-axiom\/yu-book(?:\.git)?(?=$|[^a-z0-9.-])/u.test(canonical);
+  return /(?:^|[^a-z0-9_%-])agent-axiom\/yu-book(?:\.git)?(?=$|[^a-z0-9._%-])/u.test(canonical);
 }
 
 function publicUrlSafetyProblem(value: string): string | null {
@@ -41,11 +50,9 @@ function publicUrlSafetyProblem(value: string): string | null {
   if (url.protocol !== 'https:') return 'public external URLs must use HTTPS';
   if (url.username || url.password) return 'public external URLs must not contain credentials';
 
-  const publicReference = repeatedlyDecodeUrlComponent(`${url.pathname}${url.search}${url.hash}`);
-  if (publicReference === null) return 'public external URLs must have canonical path and redirect components';
-  return containsPrivateRepositoryPair(publicReference)
-    ? 'private yu-book URLs are not public evidence URLs'
-    : null;
+  const scan = scanPrivateRepositoryReference(`${url.pathname}${url.search}${url.hash}`);
+  if (scan === 'invalid') return 'public external URLs must have canonical path and redirect components';
+  return scan === 'private' ? 'private yu-book URLs are not public evidence URLs' : null;
 }
 
 export const httpsUrlSchema = z.url().superRefine((value, context) => {
@@ -434,44 +441,234 @@ const readerReleaseCollectionsSchema = z.object({
     objects: release.objects.length,
     media: release.media.length,
   };
-  for (const key of Object.keys(actualCounts) as Array<keyof typeof actualCounts>) {
-    if (actualCounts[key] !== release.manifest.counts[key]) {
+  addCollectionSummaryIssues(
+    release.manifest,
+    actualCounts,
+    release.entries.map((entry) => entry.data.id),
+    context,
+  );
+  release.entries.forEach((entry, index) => {
+    addReadingMinutesIssue(entry.data, entry.projectedText, ['entries', index], context);
+  });
+});
+
+const actualReaderCountsSchema = z.object({
+  entries: z.number().int().nonnegative(),
+  notes: z.number().int().nonnegative(),
+  sources: z.number().int().nonnegative(),
+  objects: z.number().int().nonnegative(),
+  media: z.number().int().nonnegative(),
+}).strict();
+
+const readerReleaseCollectionSummarySchema = z.object({
+  manifest: readerReleaseManifestSchema,
+  actualCounts: actualReaderCountsSchema,
+  actualEntryIds: uniqueArray(publicEntryIdSchema),
+}).strict().superRefine((release, context) => {
+  addCollectionSummaryIssues(
+    release.manifest,
+    release.actualCounts,
+    release.actualEntryIds,
+    context,
+  );
+});
+
+const readerEntryLoadSchema = z.object({
+  entries: z.array(z.object({
+    data: readerEntrySchema,
+    body: z.string(),
+  }).strict()),
+}).strict().superRefine((release, context) => {
+  release.entries.forEach((entry, index) => {
+    addReadingMinutesIssue(entry.data, entry.body, ['entries', index], context);
+  });
+});
+
+type ReaderCounts = z.infer<typeof actualReaderCountsSchema>;
+
+function addCollectionSummaryIssues(
+  manifest: ReaderReleaseManifest,
+  actualCounts: ReaderCounts,
+  actualEntryIds: string[],
+  context: z.RefinementCtx,
+) {
+  for (const key of Object.keys(actualCounts) as Array<keyof ReaderCounts>) {
+    if (actualCounts[key] !== manifest.counts[key]) {
       context.addIssue({
         code: 'custom',
-        path: [key],
+        path: ['actualCounts', key],
         message: `${key} collection size must match manifest counts`,
       });
     }
   }
-
-  const actualEntryIds = new Set(release.entries.map((entry) => entry.data.id));
-  if (actualEntryIds.size !== release.manifest.readingOrder.length
-    || release.manifest.readingOrder.some((id) => !actualEntryIds.has(id))) {
+  const actualEntryIdSet = new Set(actualEntryIds);
+  if (actualEntryIdSet.size !== manifest.readingOrder.length
+    || manifest.readingOrder.some((id) => !actualEntryIdSet.has(id))) {
     context.addIssue({
       code: 'custom',
-      path: ['entries'],
+      path: ['actualEntryIds'],
       message: 'loaded entries must match the manifest reading order exactly',
     });
   }
+}
 
-  release.entries.forEach((entry, index) => {
-    if (entry.data.readingMinutes !== computeReadingMinutes(entry.projectedText)) {
-      context.addIssue({
-        code: 'custom',
-        path: ['entries', index, 'data', 'readingMinutes'],
-        message: 'reading minutes must be recomputed from projected text at 220 words per minute',
-      });
-    }
-  });
-});
+function addReadingMinutesIssue(
+  entry: ReaderEntry,
+  projectedText: string,
+  path: (string | number)[],
+  context: z.RefinementCtx,
+) {
+  if (entry.readingMinutes !== computeReadingMinutes(projectedText)) {
+    context.addIssue({
+      code: 'custom',
+      path: [...path, 'data', 'readingMinutes'],
+      message: 'reading minutes must be recomputed from projected text at 220 words per minute',
+    });
+  }
+}
 
 export function computeReadingMinutes(projectedText: string): number {
   const wordCount = projectedText.match(/[\p{L}\p{N}]+(?:[’'-][\p{L}\p{N}]+)*/gu)?.length ?? 0;
   return Math.max(1, Math.ceil(wordCount / 220));
 }
 
-export function validateReaderReleaseCollections(input: unknown) {
+export function validateReaderReleaseCollections(input: unknown): unknown {
+  if (typeof input === 'object' && input !== null && 'actualCounts' in input) {
+    return readerReleaseCollectionSummarySchema.parse(input);
+  }
+  if (typeof input === 'object' && input !== null && !('manifest' in input)) {
+    return readerEntryLoadSchema.parse(input);
+  }
   return readerReleaseCollectionsSchema.parse(input);
+}
+
+function validatingEntryStore(store: DataStore): DataStore {
+  return {
+    get: (key) => store.get(key),
+    entries: () => store.entries(),
+    values: () => store.values(),
+    keys: () => store.keys(),
+    set: (entry) => {
+      validateReaderReleaseCollections({
+        entries: [{ data: entry.data, body: entry.body }],
+      });
+      return store.set(entry);
+    },
+    delete: (key) => store.delete(key),
+    clear: () => store.clear(),
+    has: (key) => store.has(key),
+    addModuleImport: (fileName) => store.addModuleImport(fileName),
+  };
+}
+
+function validateLoadedEntries(store: DataStore): void {
+  validateReaderReleaseCollections({
+    entries: store.values().map((entry) => ({ data: entry.data, body: entry.body })),
+  });
+}
+
+export function withReaderEntryValidation(baseLoader: Loader): Loader {
+  return {
+    name: `reader-entry-validation:${baseLoader.name}`,
+    async load(context) {
+      await baseLoader.load({ ...context, store: validatingEntryStore(context.store) });
+      validateLoadedEntries(context.store);
+    },
+  };
+}
+
+const releaseCollectionSpecs = [
+  ['entries', '.md'],
+  ['notes', '.json'],
+  ['sources', '.json'],
+  ['objects', '.json'],
+  ['media', '.json'],
+] as const;
+
+function releaseRootUrl(context: LoaderContext): URL {
+  return new URL('./src/content/book-release/', context.config.root);
+}
+
+function readReleaseCollectionSummary(root: URL): {
+  actualCounts: ReaderCounts;
+  actualEntryIds: string[];
+} {
+  const actualCounts: ReaderCounts = { entries: 0, notes: 0, sources: 0, objects: 0, media: 0 };
+  const actualEntryIds: string[] = [];
+  for (const [collection, extension] of releaseCollectionSpecs) {
+    const directory = new URL(`${collection}/`, root);
+    let names: string[] = [];
+    try {
+      names = readdirSync(directory, { withFileTypes: true })
+        .filter((entry) => entry.isFile() && entry.name.endsWith(extension))
+        .map((entry) => entry.name);
+    } catch (error) {
+      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+    }
+    actualCounts[collection] = names.length;
+    if (collection === 'entries') {
+      actualEntryIds.push(...names.map((name) => name.slice(0, -extension.length)));
+    }
+  }
+  return { actualCounts, actualEntryIds };
+}
+
+function validateLoadedManifest(context: LoaderContext): void {
+  const root = releaseRootUrl(context);
+  if (!existsSync(new URL('manifest.json', root))) {
+    context.store.clear();
+    return;
+  }
+  const entries = context.store.values();
+  if (entries.length !== 1) {
+    context.store.clear();
+    throw new Error('reader release must load exactly one manifest');
+  }
+  try {
+    validateReaderReleaseCollections({
+      manifest: entries[0]?.data,
+      ...readReleaseCollectionSummary(root),
+    });
+  } catch (error) {
+    context.store.clear();
+    throw error;
+  }
+}
+
+function isInsideReleaseRoot(rootPath: string, changedPath: string): boolean {
+  const pathFromRoot = relative(rootPath, changedPath);
+  return pathFromRoot !== '' && !pathFromRoot.startsWith('../') && !isAbsolute(pathFromRoot);
+}
+
+export function withReaderManifestValidation(baseLoader: Loader): Loader {
+  return {
+    name: `reader-manifest-validation:${baseLoader.name}`,
+    async load(context) {
+      const syncAndValidate = async () => {
+        await baseLoader.load({ ...context, watcher: undefined });
+        validateLoadedManifest(context);
+      };
+      await syncAndValidate();
+
+      if (!context.watcher) return;
+      const releasePath = fileURLToPath(releaseRootUrl(context));
+      context.watcher.add(releasePath);
+      let reloadQueue = Promise.resolve();
+      const scheduleValidation = (changedPath: string) => {
+        if (!isInsideReleaseRoot(releasePath, changedPath)) return;
+        reloadQueue = reloadQueue
+          .then(syncAndValidate)
+          .catch((error: unknown) => {
+            context.store.clear();
+            context.logger.error(`Reader release validation failed: ${error instanceof Error ? error.message : String(error)}`);
+          });
+        return reloadQueue;
+      };
+      context.watcher.on('add', scheduleValidation);
+      context.watcher.on('change', scheduleValidation);
+      context.watcher.on('unlink', scheduleValidation);
+    },
+  };
 }
 
 export type ReaderEntry = z.infer<typeof readerEntrySchema>;

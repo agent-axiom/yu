@@ -1,21 +1,31 @@
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import type { DataStore, Loader, LoaderContext } from 'astro/loaders';
 import { describe, expect, it } from 'vitest';
 import {
   computeReadingMinutes,
+  readerContentBindingSchema,
   readerEntrySchema,
   readerMediaSchema,
   readerNoteSchema,
   readerObjectSchema,
+  readerReleaseFileDescriptorSchema,
   readerReleaseManifestSchema,
   readerReviewAttestationSchema,
+  readerReviewedPayloadSchema,
   readerSourceSchema,
   validateReaderReleaseCollections,
 } from '../src/lib/book-release/schemas';
 import {
   targetCommit,
   validAuthoredDiagramMedia,
+  validBinaryFileDescriptor,
   validCollectionSnapshot,
   validDocumentaryMedia,
   validEntry,
+  validEntryFileDescriptor,
   validGenerativeMedia,
   validManifest,
   validNote,
@@ -23,6 +33,94 @@ import {
   validPublishedInventoryObject,
   validSource,
 } from './helpers/book-release-fixture';
+
+type LoaderFactories = {
+  withReaderEntryValidation(baseLoader: Loader): Loader;
+  withReaderManifestValidation(baseLoader: Loader): Loader;
+};
+
+type StoredEntry = {
+  id: string;
+  data: Record<string, unknown>;
+  body?: string;
+  filePath?: string;
+};
+
+function createMemoryStore(seed: StoredEntry[] = []): DataStore {
+  const entries = new Map(seed.map((entry) => [entry.id, entry]));
+  const store = {
+    get: (key: string) => entries.get(key),
+    entries: () => [...entries.entries()],
+    values: () => [...entries.values()],
+    keys: () => [...entries.keys()],
+    set: (entry: StoredEntry) => {
+      entries.set(entry.id, entry);
+      return true;
+    },
+    delete: (key: string) => { entries.delete(key); },
+    clear: () => { entries.clear(); },
+    has: (key: string) => entries.has(key),
+    addModuleImport: () => undefined,
+  };
+  return store as unknown as DataStore;
+}
+
+function createLoaderContext(root: URL, store = createMemoryStore(), watcher?: LoaderContext['watcher']): LoaderContext {
+  const meta = new Map<string, string>();
+  const context = {
+    collection: 'book-test',
+    store,
+    meta: {
+      get: (key: string) => meta.get(key),
+      set: (key: string, value: string) => { meta.set(key, value); },
+      has: (key: string) => meta.has(key),
+      delete: (key: string) => { meta.delete(key); },
+    },
+    logger: {
+      info: () => undefined,
+      warn: () => undefined,
+      error: () => undefined,
+      debug: () => undefined,
+      fork: () => undefined,
+      label: 'book-test',
+      options: {},
+    },
+    config: { root },
+    parseData: async ({ data }: { data: Record<string, unknown> }) => data,
+    renderMarkdown: async () => ({ html: '' }),
+    generateDigest: () => 'digest',
+    watcher,
+  };
+  return context as unknown as LoaderContext;
+}
+
+async function createReleaseTree(options: { manifest?: boolean; omit?: 'notes' } = {}) {
+  const rootPath = await mkdtemp(join(tmpdir(), 'yu-reader-loader-'));
+  const releasePath = join(rootPath, 'src/content/book-release');
+  const files = [
+    ['entries', 'chapter-04.md'],
+    ['notes', 'note-001.json'],
+    ['sources', 'source-henan-museum.json'],
+    ['objects', 'object-han-jade-suit.json'],
+    ['media', 'media-han-jade-suit.json'],
+    ['media', 'media-nephrite-fibre.json'],
+    ['media', 'media-site-context.json'],
+  ] as const;
+  await mkdir(releasePath, { recursive: true });
+  for (const [directory, name] of files) {
+    if (directory === options.omit) continue;
+    await mkdir(join(releasePath, directory), { recursive: true });
+    await writeFile(join(releasePath, directory, name), directory === 'entries' ? '# Глава\n\nТекст.' : '{}');
+  }
+  if (options.manifest !== false) {
+    await writeFile(join(releasePath, 'manifest.json'), JSON.stringify(validManifest));
+  }
+  return { rootPath, root: pathToFileURL(`${rootPath}/`) };
+}
+
+async function loadFactories(): Promise<LoaderFactories> {
+  return await import('../src/lib/book-release/schemas') as unknown as LoaderFactories;
+}
 
 function withoutKey<T extends object>(value: T, key: string) {
   const copy = { ...value };
@@ -85,6 +183,8 @@ describe('strict reader records', () => {
     'https://vscode.dev/github/agent-axiom/yu-book',
     'https://host.example/open?repo=agent-axiom%2Fyu-book',
     'https://host.example/open?redirect=https%253A%252F%252Fgithub.dev%252Fagent-axiom%252Fyu-book%252egit',
+    'https://host.example/open?q=100%25&repo=agent-axiom%252Fyu-book',
+    'https://host.example/%25/agent-axiom%252Fyu-book',
   ])('rejects the private repository URL form %s', (url) => {
     expect(() => readerSourceSchema.parse({ ...validSource, url })).toThrow();
   });
@@ -114,6 +214,32 @@ describe('strict reader records', () => {
     expect(() => readerEntrySchema.parse({
       ...validEntry,
       readingSequence: { ...validEntry.readingSequence, privateLine: 42 },
+    })).toThrow();
+  });
+
+  it('requires every nested reading-sequence field and rejects unknown nested keys', () => {
+    for (const key of Object.keys(validEntry.readingSequence)) {
+      expect(() => readerEntrySchema.parse({
+        ...validEntry,
+        readingSequence: withoutKey(validEntry.readingSequence, key),
+      })).toThrow();
+    }
+    expect(() => readerEntrySchema.parse({
+      ...validEntry,
+      readingSequence: { ...validEntry.readingSequence, privateOffset: 42 },
+    })).toThrow();
+  });
+
+  it.each([validObject, validPublishedInventoryObject])('requires the exact inventory branch %#', (record) => {
+    for (const key of Object.keys(record.inventory)) {
+      expect(() => readerObjectSchema.parse({
+        ...record,
+        inventory: withoutKey(record.inventory, key),
+      })).toThrow();
+    }
+    expect(() => readerObjectSchema.parse({
+      ...record,
+      inventory: { ...record.inventory, internalNote: 'private' },
     })).toThrow();
   });
 });
@@ -155,6 +281,17 @@ describe('manifest v4 and attestation v3', () => {
     expect(readerReleaseManifestSchema.parse(validManifest)).toEqual(validManifest);
   });
 
+  it.each([-1, 0, 1, 2, 3, 5, 4.1, '4', null])('rejects non-v4 manifest version %s', (version) => {
+    expect(() => readerReleaseManifestSchema.parse({ ...validManifest, version })).toThrow();
+  });
+
+  it.each([-1, 0, 1, 2, 4, 5, 3.1, '3', null])('rejects non-v3 attestation version %s', (schemaVersion) => {
+    expect(() => readerReviewAttestationSchema.parse({
+      ...validManifest.reviewAttestation,
+      schemaVersion,
+    })).toThrow();
+  });
+
   it.each([
     ['manifest v3', { version: 3 }],
     ['wrong projection', { projection: 'full-records-v1' }],
@@ -166,6 +303,64 @@ describe('manifest v4 and attestation v3', () => {
     ['changed disclosure', { reviewAttestation: { ...validManifest.reviewAttestation, disclosure: 'Проверено.' } }],
   ])('rejects %s', (_name, override) => {
     expect(() => readerReleaseManifestSchema.parse({ ...validManifest, ...override })).toThrow();
+  });
+
+  it('accepts a valid binary public image descriptor', () => {
+    expect(readerReleaseFileDescriptorSchema.parse(validBinaryFileDescriptor)).toEqual(validBinaryFileDescriptor);
+  });
+
+  it('requires the exact strict file descriptor and validates kind, length and SHA', () => {
+    for (const descriptor of [validBinaryFileDescriptor, validEntryFileDescriptor]) {
+      for (const key of Object.keys(descriptor)) {
+        expect(() => readerReleaseFileDescriptorSchema.parse(withoutKey(descriptor, key))).toThrow();
+      }
+      expect(() => readerReleaseFileDescriptorSchema.parse({ ...descriptor, privatePath: 'rights/file' })).toThrow();
+    }
+    expect(() => readerReleaseFileDescriptorSchema.parse({ ...validBinaryFileDescriptor, kind: 'text' })).toThrow();
+    expect(() => readerReleaseFileDescriptorSchema.parse({ ...validEntryFileDescriptor, kind: 'binary' })).toThrow();
+    expect(() => readerReleaseFileDescriptorSchema.parse({ ...validEntryFileDescriptor, byteLength: -1 })).toThrow();
+    expect(() => readerReleaseFileDescriptorSchema.parse({ ...validEntryFileDescriptor, byteLength: 1.5 })).toThrow();
+    expect(() => readerReleaseFileDescriptorSchema.parse({ ...validEntryFileDescriptor, sha256: 'ABC' })).toThrow();
+  });
+
+  it.each([
+    ['counts', validManifest.counts, (value: object) => ({ ...validManifest, counts: value }), Object.keys(validManifest.counts)],
+    ['reviewed payload', validManifest.reviewAttestation.reviewedPayload, (value: object) => ({
+      ...validManifest.reviewAttestation,
+      reviewedPayload: value,
+    }), Object.keys(validManifest.reviewAttestation.reviewedPayload)],
+    ['content binding', validManifest.reviewAttestation.contentBinding, (value: object) => ({
+      ...validManifest.reviewAttestation,
+      contentBinding: value,
+    }), Object.keys(validManifest.reviewAttestation.contentBinding)],
+  ])('requires every nested %s field', (name, nested, wrap, keys) => {
+    for (const key of keys) {
+      const mutation = wrap(withoutKey(nested, key));
+      if (name === 'counts') {
+        expect(() => readerReleaseManifestSchema.parse(mutation)).toThrow();
+      } else {
+        expect(() => readerReviewAttestationSchema.parse(mutation)).toThrow();
+      }
+    }
+  });
+
+  it('rejects unknown fields in every nested manifest record', () => {
+    expect(() => readerReleaseManifestSchema.parse({
+      ...validManifest,
+      counts: { ...validManifest.counts, drafts: 1 },
+    })).toThrow();
+    expect(() => readerReleaseFileDescriptorSchema.parse({
+      ...validEntryFileDescriptor,
+      mtime: 123,
+    })).toThrow();
+    expect(() => readerReviewedPayloadSchema.parse({
+      ...validManifest.reviewAttestation.reviewedPayload,
+      reviewer: 'private',
+    })).toThrow();
+    expect(() => readerContentBindingSchema.parse({
+      ...validManifest.reviewAttestation.contentBinding,
+      canonicalizer: 'private',
+    })).toThrow();
   });
 
   it.each([
@@ -231,6 +426,129 @@ describe('manifest v4 and attestation v3', () => {
     for (const key of Object.keys(validManifest)) {
       expect(() => readerReleaseManifestSchema.parse(withoutKey(validManifest, key))).toThrow();
     }
+  });
+});
+
+describe('production reader collection loaders', () => {
+  it('wires aggregate wrappers around the official glob loaders', async () => {
+    const config = await readFile(join(process.cwd(), 'src/content.config.ts'), 'utf8');
+    expect(config).toContain('withReaderEntryValidation(glob(');
+    expect(config).toContain('withReaderManifestValidation(glob(');
+  });
+
+  it('rejects readingMinutes that disagree with a real Markdown body', async () => {
+    const { withReaderEntryValidation } = await loadFactories();
+    const body = `# Глава\n\n${Array.from({ length: 221 }, () => 'слово').join(' ')}`;
+    const baseLoader: Loader = {
+      name: 'fixture-entry-loader',
+      load: async ({ store }) => {
+        store.set({ id: validEntry.id, data: { ...validEntry, readingMinutes: 1 }, body });
+      },
+    };
+    const wrapped = withReaderEntryValidation(baseLoader);
+    await expect(wrapped.load(createLoaderContext(pathToFileURL(`${tmpdir()}/`))))
+      .rejects.toThrow(/reading minutes/i);
+  });
+
+  it('keeps watcher entry reloads behind the same reading-time gate', async () => {
+    const { withReaderEntryValidation } = await loadFactories();
+    const callbacks = new Map<string, (...args: unknown[]) => unknown>();
+    const watcher = {
+      add: () => undefined,
+      on: (event: string, callback: (...args: unknown[]) => unknown) => {
+        callbacks.set(event, callback);
+        return watcher;
+      },
+    } as unknown as LoaderContext['watcher'];
+    const body = Array.from({ length: 221 }, () => 'слово').join(' ');
+    const baseLoader: Loader = {
+      name: 'watching-entry-loader',
+      load: async ({ store, watcher: activeWatcher }) => {
+        store.set({ id: validEntry.id, data: validEntry, body });
+        activeWatcher?.on('change', () => store.set({
+          id: validEntry.id,
+          data: { ...validEntry, readingMinutes: 1 },
+          body,
+        }));
+      },
+    };
+    const store = createMemoryStore();
+    await withReaderEntryValidation(baseLoader).load(createLoaderContext(pathToFileURL(`${tmpdir()}/`), store, watcher));
+    expect(() => callbacks.get('change')?.('entry.md')).toThrow(/reading minutes/i);
+    expect(store.get(validEntry.id)?.data.readingMinutes).toBe(2);
+  });
+
+  it('rejects manifest counts that differ from real single-level collection files', async () => {
+    const { withReaderManifestValidation } = await loadFactories();
+    const tree = await createReleaseTree({ omit: 'notes' });
+    try {
+      const baseLoader: Loader = {
+        name: 'fixture-manifest-loader',
+        load: async ({ store }) => {
+          store.set({ id: 'manifest', data: validManifest });
+        },
+      };
+      await expect(withReaderManifestValidation(baseLoader).load(createLoaderContext(tree.root)))
+        .rejects.toThrow(/collection size/i);
+    } finally {
+      await rm(tree.rootPath, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps a baseline without a manifest buildable and clears a stale cached manifest', async () => {
+    const { withReaderManifestValidation } = await loadFactories();
+    const tree = await createReleaseTree({ manifest: false });
+    try {
+      const store = createMemoryStore([{ id: 'manifest', data: validManifest }]);
+      const baseLoader: Loader = { name: 'empty-manifest-loader', load: async () => undefined };
+      await expect(withReaderManifestValidation(baseLoader).load(createLoaderContext(tree.root, store)))
+        .resolves.toBeUndefined();
+      expect(store.values()).toEqual([]);
+    } finally {
+      await rm(tree.rootPath, { recursive: true, force: true });
+    }
+  });
+
+  it('clears the manifest gate when a watched payload change breaks aggregate counts', async () => {
+    const { withReaderManifestValidation } = await loadFactories();
+    const tree = await createReleaseTree();
+    const callbacks = new Map<string, (...args: unknown[]) => unknown>();
+    const watcher = {
+      add: () => undefined,
+      on: (event: string, callback: (...args: unknown[]) => unknown) => {
+        callbacks.set(event, callback);
+        return watcher;
+      },
+    } as unknown as LoaderContext['watcher'];
+    try {
+      const store = createMemoryStore();
+      const baseLoader: Loader = {
+        name: 'watching-manifest-loader',
+        load: async ({ store: activeStore }) => {
+          activeStore.set({ id: 'manifest', data: validManifest });
+        },
+      };
+      await withReaderManifestValidation(baseLoader)
+        .load(createLoaderContext(tree.root, store, watcher));
+      expect(store.values()).toHaveLength(1);
+
+      const removedNote = join(tree.rootPath, 'src/content/book-release/notes/note-001.json');
+      await rm(removedNote);
+      await callbacks.get('unlink')?.(removedNote);
+      expect(store.values()).toEqual([]);
+    } finally {
+      await rm(tree.rootPath, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('safe repeated URL decoding', () => {
+  it.each([
+    'https://museum.example/search?q=100%25+jade',
+    'https://museum.example/media/100%25-jade.jpg',
+    'https://host.example/open?repo=agent-axiom%2Fyu-book_notes',
+  ])('accepts valid percent and non-exact repository coordinates: %s', (url) => {
+    expect(readerSourceSchema.parse({ ...validSource, url }).url).toBe(url);
   });
 });
 
