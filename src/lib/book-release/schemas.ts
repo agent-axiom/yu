@@ -31,17 +31,6 @@ function repeatedlyDecodeUrlComponent(value: string): string | null {
   return null;
 }
 
-function canonicalHostname(hostname: string): string {
-  return hostname.toLowerCase().replace(/\.+$/u, '');
-}
-
-function isGitHubOwnedHostname(hostname: string): boolean {
-  return hostname === 'github.com'
-    || hostname.endsWith('.github.com')
-    || hostname === 'githubusercontent.com'
-    || hostname.endsWith('.githubusercontent.com');
-}
-
 function containsPrivateRepositoryPair(value: string): boolean {
   const canonical = value.toLowerCase().replace(/\\/gu, '/').replace(/\/+/gu, '/');
   return /(?:^|[^a-z0-9-])agent-axiom\/yu-book(?:\.git)?(?=$|[^a-z0-9.-])/u.test(canonical);
@@ -52,16 +41,11 @@ function publicUrlSafetyProblem(value: string): string | null {
   if (url.protocol !== 'https:') return 'public external URLs must use HTTPS';
   if (url.username || url.password) return 'public external URLs must not contain credentials';
 
-  const pathname = repeatedlyDecodeUrlComponent(url.pathname);
-  if (pathname === null) return 'public external URLs must have a canonical path';
-
-  const hostname = canonicalHostname(url.hostname);
-  if (!isGitHubOwnedHostname(hostname)) return null;
-
-  const githubReference = repeatedlyDecodeUrlComponent(`${url.pathname}${url.search}${url.hash}`);
-  if (githubReference === null) return 'GitHub URLs must have canonical path and redirect components';
-  const isPrivateGitHubRepository = containsPrivateRepositoryPair(githubReference);
-  return isPrivateGitHubRepository ? 'private yu-book URLs are not public evidence URLs' : null;
+  const publicReference = repeatedlyDecodeUrlComponent(`${url.pathname}${url.search}${url.hash}`);
+  if (publicReference === null) return 'public external URLs must have canonical path and redirect components';
+  return containsPrivateRepositoryPair(publicReference)
+    ? 'private yu-book URLs are not public evidence URLs'
+    : null;
 }
 
 export const httpsUrlSchema = z.url().superRefine((value, context) => {

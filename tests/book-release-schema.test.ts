@@ -81,6 +81,10 @@ describe('strict reader records', () => {
     'https://codeload.github.com/agent-axiom/yu-book/zip/refs/heads/main',
     'https://github.com/login?return_to=%252Fagent-axiom%252Fyu-book',
     'https://github.com/login?return_to=https%253A%252F%252Fgithub.com%252Fagent-axiom%252Fyu-book%252egit',
+    'https://github.dev/agent-axiom/yu-book',
+    'https://vscode.dev/github/agent-axiom/yu-book',
+    'https://host.example/open?repo=agent-axiom%2Fyu-book',
+    'https://host.example/open?redirect=https%253A%252F%252Fgithub.dev%252Fagent-axiom%252Fyu-book%252egit',
   ])('rejects the private repository URL form %s', (url) => {
     expect(() => readerSourceSchema.parse({ ...validSource, url })).toThrow();
   });
@@ -90,6 +94,9 @@ describe('strict reader records', () => {
     'https://raw.githubusercontent.com/agent-axiom/yu/main/public/credits.json',
     'https://api.github.com/repos/agent-axiom/yu',
     'https://codeload.github.com/agent-axiom/yu/zip/refs/heads/main',
+    'https://host.example/open?repo=agent-axiom%2Fyu',
+    'https://github.dev/agent-axiom/yu-book-notes',
+    'https://museum.example/exhibitions/yu-book?curator=agent-axiom',
   ])('preserves the public repository URL %s', (url) => {
     expect(readerSourceSchema.parse({ ...validSource, url }).url).toBe(url);
   });
