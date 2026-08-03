@@ -7,6 +7,7 @@ import {
   readerObjectSchema,
   readerReleaseManifestSchema,
   readerSourceSchema,
+  withImmutableReaderCollection,
   withReaderEntryValidation,
   withReaderManifestValidation,
 } from './lib/book-release/schemas';
@@ -92,22 +93,22 @@ const bookEntries = defineCollection({
 });
 
 const bookNotes = defineCollection({
-  loader: glob({ pattern: '*.json', base: './src/content/book-release/notes' }),
+  loader: withImmutableReaderCollection(glob({ pattern: '*.json', base: './src/content/book-release/notes' })),
   schema: readerNoteSchema,
 });
 
 const bookSources = defineCollection({
-  loader: glob({ pattern: '*.json', base: './src/content/book-release/sources' }),
+  loader: withImmutableReaderCollection(glob({ pattern: '*.json', base: './src/content/book-release/sources' })),
   schema: readerSourceSchema,
 });
 
 const bookObjects = defineCollection({
-  loader: glob({ pattern: '*.json', base: './src/content/book-release/objects' }),
+  loader: withImmutableReaderCollection(glob({ pattern: '*.json', base: './src/content/book-release/objects' })),
   schema: readerObjectSchema,
 });
 
 const bookMedia = defineCollection({
-  loader: glob({ pattern: '*.json', base: './src/content/book-release/media' }),
+  loader: withImmutableReaderCollection(glob({ pattern: '*.json', base: './src/content/book-release/media' })),
   schema: readerMediaSchema,
 });
 

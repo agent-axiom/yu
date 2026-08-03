@@ -533,15 +533,24 @@ export function computeReadingMinutes(projectedText: string): number {
   return Math.max(1, Math.ceil(wordCount / 220));
 }
 
-export function validateReaderReleaseCollections(input: unknown): unknown {
-  if (typeof input === 'object' && input !== null && 'actualCounts' in input) {
-    return readerReleaseCollectionSummarySchema.parse(input);
-  }
-  if (typeof input === 'object' && input !== null && !('manifest' in input)) {
-    assertLoadedEntryFileBindings(input);
-    return readerEntryLoadSchema.parse(input);
-  }
+export type ReaderReleaseCollectionSnapshot = z.infer<typeof readerReleaseCollectionsSchema>;
+export type ReaderReleaseCollectionSummary = z.infer<typeof readerReleaseCollectionSummarySchema>;
+export type ReaderEntryLoad = z.infer<typeof readerEntryLoadSchema>;
+
+export function validateReaderReleaseCollections(input: unknown): ReaderReleaseCollectionSnapshot {
   return readerReleaseCollectionsSchema.parse(input);
+}
+
+export function validateReaderReleaseCollectionSummary(input: unknown): ReaderReleaseCollectionSummary {
+  return readerReleaseCollectionSummarySchema.parse(input);
+}
+
+export function validateReaderEntryLoad(input: unknown): ReaderEntryLoad {
+  if (typeof input !== 'object' || input === null) {
+    throw new Error('reader entry loader requires an object');
+  }
+  assertLoadedEntryFileBindings(input);
+  return readerEntryLoadSchema.parse(input);
 }
 
 function entryPublicIdFromFilePath(filePath: unknown): string | null {
@@ -573,26 +582,22 @@ function assertLoadedEntryFileBindings(input: object): void {
 }
 
 function validatingEntryStore(store: DataStore): DataStore {
-  return {
-    get: (key) => store.get(key),
-    entries: () => store.entries(),
-    values: () => store.values(),
-    keys: () => store.keys(),
-    set: (entry) => {
-      validateReaderReleaseCollections({
-        entries: [{ data: entry.data, body: entry.body, filePath: entry.filePath }],
-      });
-      return store.set(entry);
-    },
-    delete: (key) => store.delete(key),
-    clear: () => store.clear(),
-    has: (key) => store.has(key),
-    addModuleImport: (fileName) => store.addModuleImport(fileName),
+  const validatingSet: DataStore['set'] = (entry) => {
+    validateReaderEntryLoad({
+      entries: [{ data: entry.data, body: entry.body, filePath: entry.filePath }],
+    });
+    return store.set(entry);
   };
+  return new Proxy(store, {
+    get(target, property, receiver) {
+      if (property === 'set') return validatingSet;
+      return Reflect.get(target, property, receiver);
+    },
+  });
 }
 
 function validateLoadedEntries(store: DataStore): void {
-  validateReaderReleaseCollections({
+  validateReaderEntryLoad({
     entries: store.values().map((entry) => ({
       data: entry.data,
       body: entry.body,
@@ -602,13 +607,14 @@ function validateLoadedEntries(store: DataStore): void {
 }
 
 export function withReaderEntryValidation(baseLoader: Loader): Loader {
-  return {
+  const validatingLoader: Loader = {
     name: `reader-entry-validation:${baseLoader.name}`,
     async load(context) {
       await baseLoader.load({ ...context, store: validatingEntryStore(context.store) });
       validateLoadedEntries(context.store);
     },
   };
+  return withImmutableReaderCollection(validatingLoader);
 }
 
 const releaseCollectionSpecs = [
@@ -681,7 +687,7 @@ function validateLoadedManifest(context: LoaderContext): void {
     throw new Error('reader release must load exactly one manifest');
   }
   try {
-    validateReaderReleaseCollections({
+    validateReaderReleaseCollectionSummary({
       manifest: entries[0]?.data,
       ...readReleaseCollectionSummary(root),
     });
@@ -693,41 +699,58 @@ function validateLoadedManifest(context: LoaderContext): void {
 
 function isInsideReleaseRoot(rootPath: string, changedPath: string): boolean {
   const pathFromRoot = relative(rootPath, changedPath);
-  return pathFromRoot !== '' && !pathFromRoot.startsWith('../') && !isAbsolute(pathFromRoot);
+  return pathFromRoot === '' || (!pathFromRoot.startsWith('../') && !isAbsolute(pathFromRoot));
 }
 
-export function withReaderManifestValidation(baseLoader: Loader): Loader {
+type ImmutableReaderCollectionOptions = {
+  watchPublicImages?: boolean;
+};
+
+export function withImmutableReaderCollection(
+  baseLoader: Loader,
+  options: ImmutableReaderCollectionOptions = {},
+): Loader {
   return {
-    name: `reader-manifest-validation:${baseLoader.name}`,
+    name: `immutable-reader:${baseLoader.name}`,
     async load(context) {
-      const syncAndValidate = async () => {
+      try {
         await baseLoader.load({ ...context, watcher: undefined });
-        validateLoadedManifest(context);
-      };
-      await syncAndValidate();
+      } catch (error) {
+        context.store.clear();
+        throw error;
+      }
 
       if (!context.watcher) return;
       const watchedPaths = [
         fileURLToPath(releaseRootUrl(context)),
-        fileURLToPath(publicImageRootUrl(context)),
+        ...(options.watchPublicImages ? [fileURLToPath(publicImageRootUrl(context))] : []),
       ];
       context.watcher.add(watchedPaths);
-      let reloadQueue = Promise.resolve();
-      const scheduleValidation = (changedPath: string) => {
+      let invalidated = false;
+      const invalidateCollection = (changedPath: string) => {
         if (!watchedPaths.some((rootPath) => isInsideReleaseRoot(rootPath, changedPath))) return;
-        reloadQueue = reloadQueue
-          .then(syncAndValidate)
-          .catch((error: unknown) => {
-            context.store.clear();
-            context.logger.error(`Reader release validation failed: ${error instanceof Error ? error.message : String(error)}`);
-          });
-        return reloadQueue;
+        context.store.clear();
+        if (!invalidated) {
+          context.logger.warn('Reader release changed; restart required before book content can be loaded again.');
+          invalidated = true;
+        }
       };
-      context.watcher.on('add', scheduleValidation);
-      context.watcher.on('change', scheduleValidation);
-      context.watcher.on('unlink', scheduleValidation);
+      context.watcher.on('add', invalidateCollection);
+      context.watcher.on('change', invalidateCollection);
+      context.watcher.on('unlink', invalidateCollection);
     },
   };
+}
+
+export function withReaderManifestValidation(baseLoader: Loader): Loader {
+  const validatingLoader: Loader = {
+    name: `reader-manifest-validation:${baseLoader.name}`,
+    async load(context) {
+      await baseLoader.load(context);
+      validateLoadedManifest(context);
+    },
+  };
+  return withImmutableReaderCollection(validatingLoader, { watchPublicImages: true });
 }
 
 export type ReaderEntry = z.infer<typeof readerEntrySchema>;

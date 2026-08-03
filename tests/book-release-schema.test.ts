@@ -35,8 +35,11 @@ import {
 } from './helpers/book-release-fixture';
 
 type LoaderFactories = {
+  withImmutableReaderCollection(baseLoader: Loader): Loader;
   withReaderEntryValidation(baseLoader: Loader): Loader;
   withReaderManifestValidation(baseLoader: Loader): Loader;
+  validateReaderReleaseCollectionSummary(input: unknown): unknown;
+  validateReaderEntryLoad(input: unknown): unknown;
 };
 
 type StoredEntry = {
@@ -65,7 +68,12 @@ function createMemoryStore(seed: StoredEntry[] = []): DataStore {
   return store as unknown as DataStore;
 }
 
-function createLoaderContext(root: URL, store = createMemoryStore(), watcher?: LoaderContext['watcher']): LoaderContext {
+function createLoaderContext(
+  root: URL,
+  store = createMemoryStore(),
+  watcher?: LoaderContext['watcher'],
+  logs: string[] = [],
+): LoaderContext {
   const meta = new Map<string, string>();
   const context = {
     collection: 'book-test',
@@ -78,7 +86,7 @@ function createLoaderContext(root: URL, store = createMemoryStore(), watcher?: L
     },
     logger: {
       info: () => undefined,
-      warn: () => undefined,
+      warn: (message: string) => { logs.push(message); },
       error: () => undefined,
       debug: () => undefined,
       fork: () => undefined,
@@ -459,6 +467,7 @@ describe('production reader collection loaders', () => {
     const config = await readFile(join(process.cwd(), 'src/content.config.ts'), 'utf8');
     expect(config).toContain('withReaderEntryValidation(glob(');
     expect(config).toContain('withReaderManifestValidation(glob(');
+    expect(config.match(/withImmutableReaderCollection\(glob\(/gu)).toHaveLength(4);
   });
 
   it('rejects readingMinutes that disagree with a real Markdown body', async () => {
@@ -476,13 +485,22 @@ describe('production reader collection loaders', () => {
       },
     };
     const wrapped = withReaderEntryValidation(baseLoader);
-    await expect(wrapped.load(createLoaderContext(pathToFileURL(`${tmpdir()}/`))))
+    const store = createMemoryStore([{
+      id: validEntry.id,
+      data: validEntry,
+      body: Array.from({ length: 221 }, () => 'слово').join(' '),
+      filePath: 'src/content/book-release/entries/chapter-04.md',
+    }]);
+    await expect(wrapped.load(createLoaderContext(pathToFileURL(`${tmpdir()}/`), store)))
       .rejects.toThrow(/reading minutes/i);
+    expect(store.values()).toEqual([]);
   });
 
-  it('keeps watcher entry reloads behind the same reading-time gate', async () => {
+  it('invalidates entry content on any watched release change without registering the base watcher', async () => {
     const { withReaderEntryValidation } = await loadFactories();
     const callbacks = new Map<string, (...args: unknown[]) => unknown>();
+    let baseReceivedWatcher = false;
+    const logs: string[] = [];
     const watcher = {
       add: () => undefined,
       on: (event: string, callback: (...args: unknown[]) => unknown) => {
@@ -494,24 +512,69 @@ describe('production reader collection loaders', () => {
     const baseLoader: Loader = {
       name: 'watching-entry-loader',
       load: async ({ store, watcher: activeWatcher }) => {
+        baseReceivedWatcher = activeWatcher !== undefined;
         store.set({
           id: validEntry.id,
           data: validEntry,
           body,
           filePath: 'src/content/book-release/entries/chapter-04.md',
         });
-        activeWatcher?.on('change', () => store.set({
-          id: validEntry.id,
-          data: { ...validEntry, readingMinutes: 1 },
-          body,
-          filePath: 'src/content/book-release/entries/chapter-04.md',
-        }));
       },
     };
     const store = createMemoryStore();
-    await withReaderEntryValidation(baseLoader).load(createLoaderContext(pathToFileURL(`${tmpdir()}/`), store, watcher));
-    expect(() => callbacks.get('change')?.('entry.md')).toThrow(/reading minutes/i);
-    expect(store.get(validEntry.id)?.data.readingMinutes).toBe(2);
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-watch-'));
+    try {
+      await withReaderEntryValidation(baseLoader).load(createLoaderContext(
+        pathToFileURL(`${root}/`), store, watcher, logs,
+      ));
+      expect(baseReceivedWatcher).toBe(false);
+      callbacks.get('change')?.(join(root, 'src/content/book-release/notes/note-002.json'));
+      expect(store.values()).toEqual([]);
+      expect(logs.join('\n')).toMatch(/restart required/i);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('forwards hidden DataStore methods while intercepting only set', async () => {
+    const { withReaderEntryValidation } = await loadFactories();
+    const store = createMemoryStore() as DataStore & { addAssetImport(asset: string): string };
+    const importedAssets: string[] = [];
+    Object.defineProperty(store, 'addAssetImport', {
+      enumerable: false,
+      value(asset: string) {
+        importedAssets.push(asset);
+        return `asset:${asset}`;
+      },
+    });
+    const baseLoader: Loader = {
+      name: 'asset-aware-entry-loader',
+      load: async ({ store: activeStore }) => {
+        expect((activeStore as typeof store).addAssetImport('jade.webp')).toBe('asset:jade.webp');
+        activeStore.set({
+          id: validEntry.id,
+          data: validEntry,
+          body: Array.from({ length: 221 }, () => 'слово').join(' '),
+          filePath: 'src/content/book-release/entries/chapter-04.md',
+        });
+      },
+    };
+    await withReaderEntryValidation(baseLoader)
+      .load(createLoaderContext(pathToFileURL(`${tmpdir()}/`), store));
+    expect(importedAssets).toEqual(['jade.webp']);
+  });
+
+  it('clears stale JSON data when an immutable collection fails its initial load', async () => {
+    const { withImmutableReaderCollection } = await loadFactories();
+    const store = createMemoryStore([{ id: 'note-001', data: validNote }]);
+    const baseLoader: Loader = {
+      name: 'invalid-json-loader',
+      load: async () => { throw new Error('invalid JSON payload'); },
+    };
+    await expect(withImmutableReaderCollection(baseLoader)
+      .load(createLoaderContext(pathToFileURL(`${tmpdir()}/`), store)))
+      .rejects.toThrow(/invalid JSON payload/i);
+    expect(store.values()).toEqual([]);
   });
 
   it.each(['prologue', 'chapter-05'])('rejects frontmatter id %s that disagrees with the Markdown filename', async (id) => {
@@ -590,7 +653,7 @@ describe('production reader collection loaders', () => {
     }
   });
 
-  it('clears the manifest gate when a watched payload change breaks aggregate counts', async () => {
+  it('clears the manifest gate on any watched payload change without auto-reloading', async () => {
     const { withReaderManifestValidation } = await loadFactories();
     const tree = await createReleaseTree();
     const callbacks = new Map<string, (...args: unknown[]) => unknown>();
@@ -613,9 +676,8 @@ describe('production reader collection loaders', () => {
         .load(createLoaderContext(tree.root, store, watcher));
       expect(store.values()).toHaveLength(1);
 
-      const removedNote = join(tree.rootPath, 'src/content/book-release/notes/note-001.json');
-      await rm(removedNote);
-      await callbacks.get('unlink')?.(removedNote);
+      const changedImage = join(tree.rootPath, 'public/images/book-release/changed.webp');
+      await callbacks.get('change')?.(changedImage);
       expect(store.values()).toEqual([]);
     } finally {
       await rm(tree.rootPath, { recursive: true, force: true });
@@ -634,6 +696,13 @@ describe('safe repeated URL decoding', () => {
 });
 
 describe('collection-level validation', () => {
+  it('provides separate aggregate, summary and entry-load validators', async () => {
+    const validators = await loadFactories();
+    expect(validateReaderReleaseCollections).toBeTypeOf('function');
+    expect(validators.validateReaderReleaseCollectionSummary).toBeTypeOf('function');
+    expect(validators.validateReaderEntryLoad).toBeTypeOf('function');
+  });
+
   it('recomputes reading time at 220 words/minute, ceiling, minimum one', () => {
     expect(computeReadingMinutes('')).toBe(1);
     expect(computeReadingMinutes(Array.from({ length: 220 }, () => 'слово').join(' '))).toBe(1);
