@@ -35,6 +35,7 @@ import {
 } from './helpers/book-release-fixture';
 
 type LoaderFactories = {
+  countReaderVisibleWords(markdown: string): number;
   withImmutableReaderCollection(baseLoader: Loader): Loader;
   withReaderEntryValidation(baseLoader: Loader): Loader;
   withReaderManifestValidation(baseLoader: Loader): Loader;
@@ -118,6 +119,16 @@ function createMultiListenerWatcher() {
       listeners.set(event, eventListeners);
       return watcher;
     },
+    off(event: string, callback: (changedPath: string) => void) {
+      listeners.get(event)?.delete(callback);
+      return watcher;
+    },
+    listeners(event: string) {
+      return [...(listeners.get(event) ?? [])];
+    },
+    removeAllTrackedListeners() {
+      listeners.clear();
+    },
   };
   return {
     watcher: watcher as unknown as LoaderContext['watcher'],
@@ -126,6 +137,9 @@ function createMultiListenerWatcher() {
     },
     listenerCount(event: SyntheticWatcherEvent) {
       return listeners.get(event)?.size ?? 0;
+    },
+    removeAllTrackedListeners() {
+      watcher.removeAllTrackedListeners();
     },
     watchedPaths,
   };
@@ -762,6 +776,51 @@ describe('production reader collection loaders', () => {
     }
   });
 
+  it('re-arms one shared listener generation after Astro removes tracked listeners', async () => {
+    const factories = await loadFactories();
+    const tree = await createReleaseTree();
+    const syntheticWatcher = createMultiListenerWatcher();
+    const generationOneStores = Array.from({ length: 6 }, () => createMemoryStore());
+    const generationTwoStores = Array.from({ length: 6 }, () => createMemoryStore());
+    const logs: string[] = [];
+    try {
+      await Promise.all(createSixReaderLoaders(factories).map((loader, index) => loader.load(
+        createLoaderContext(tree.root, generationOneStores[index], syntheticWatcher.watcher),
+      )));
+      for (const event of ['add', 'change', 'unlink', 'addDir', 'unlinkDir'] as const) {
+        expect(syntheticWatcher.listenerCount(event)).toBe(1);
+      }
+
+      syntheticWatcher.removeAllTrackedListeners();
+      for (const event of ['add', 'change', 'unlink', 'addDir', 'unlinkDir'] as const) {
+        expect(syntheticWatcher.listenerCount(event)).toBe(0);
+      }
+
+      await Promise.all(createSixReaderLoaders(factories).map((loader, index) => loader.load(
+        createLoaderContext(tree.root, generationTwoStores[index], syntheticWatcher.watcher, logs),
+      )));
+      for (const event of ['add', 'change', 'unlink', 'addDir', 'unlinkDir'] as const) {
+        expect(syntheticWatcher.listenerCount(event)).toBe(1);
+      }
+      expect(syntheticWatcher.watchedPaths).toHaveLength(4);
+
+      syntheticWatcher.emit('change', join(tree.rootPath, 'public/images/book-release/changed.webp'));
+      expect(generationTwoStores.every((store) => store.values().length === 0)).toBe(true);
+      expect(generationOneStores.every((store) => store.values().length === 1)).toBe(true);
+      expect(logs.filter((message) => /restart required/iu.test(message))).toHaveLength(1);
+
+      const blockedStores = Array.from({ length: 6 }, () => createMemoryStore());
+      const blockedResults = await Promise.allSettled(createSixReaderLoaders(factories).map((loader, index) => loader.load(
+        createLoaderContext(tree.root, blockedStores[index], syntheticWatcher.watcher, logs),
+      )));
+      expect(blockedResults.every((result) => result.status === 'rejected')).toBe(true);
+      expect(blockedStores.every((store) => store.values().length === 0)).toBe(true);
+      expect(logs.filter((message) => /restart required/iu.test(message))).toHaveLength(1);
+    } finally {
+      await rm(tree.rootPath, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     ['add', 'src/content/book-release/notes/note-002.json'],
     ['change', 'public/images/book-release/changed.webp'],
@@ -806,6 +865,41 @@ describe('collection-level validation', () => {
     expect(validateReaderReleaseCollections).toBeTypeOf('function');
     expect(validators.validateReaderReleaseCollectionSummary).toBeTypeOf('function');
     expect(validators.validateReaderEntryLoad).toBeTypeOf('function');
+  });
+
+  it('counts only visible labels and code content in reader Markdown', async () => {
+    const { countReaderVisibleWords } = await loadFactories();
+    const markdown = [
+      '**e\u0301lan** [видимая метка](https://museum.example/a/b/c/d/e/f "скрытый заголовок") `код внутри`',
+      '```ts',
+      'const value = 1;',
+      '```',
+    ].join('\n');
+    expect(countReaderVisibleWords(markdown)).toBe(8);
+  });
+
+  it('accepts the exporter reading time at a visible-link boundary', () => {
+    const markdown = `${Array.from({ length: 219 }, (_, index) => `слово${index + 1}`).join(' ')} [источник](https://museum.example/a/b/c/d/e/f/g/h/i/j)`;
+    const snapshot = {
+      ...validCollectionSnapshot,
+      entries: [{
+        data: { ...validCollectionSnapshot.entries[0].data, readingMinutes: 1 },
+        projectedText: markdown,
+      }],
+    };
+    expect(computeReadingMinutes(markdown)).toBe(1);
+    expect(validateReaderReleaseCollections(snapshot)).toEqual(snapshot);
+  });
+
+  it('still rejects frontmatter reading time that disagrees with visible Markdown', () => {
+    const markdown = `${Array.from({ length: 219 }, (_, index) => `слово${index + 1}`).join(' ')} [источник](https://museum.example/a/b/c/d/e/f/g/h/i/j)`;
+    expect(() => validateReaderReleaseCollections({
+      ...validCollectionSnapshot,
+      entries: [{
+        data: { ...validCollectionSnapshot.entries[0].data, readingMinutes: 2 },
+        projectedText: markdown,
+      }],
+    })).toThrow(/reading minutes/iu);
   });
 
   it('recomputes reading time at 220 words/minute, ceiling, minimum one', () => {

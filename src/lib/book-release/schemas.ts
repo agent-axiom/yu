@@ -2,6 +2,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { isAbsolute, posix, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { DataStore, Loader, LoaderContext } from 'astro/loaders';
+import { fromMarkdown } from 'mdast-util-from-markdown';
 import { z } from 'zod';
 
 export const AGENT_REVIEW_DISCLOSURE =
@@ -528,8 +529,31 @@ function addReadingMinutesIssue(
   }
 }
 
+function collectReaderVisibleText(node: unknown, values: string[]): void {
+  if (typeof node !== 'object' || node === null) return;
+  const markdownNode = node as { type?: unknown; value?: unknown; children?: unknown };
+  if ((markdownNode.type === 'text' || markdownNode.type === 'inlineCode' || markdownNode.type === 'code')
+    && typeof markdownNode.value === 'string') {
+    values.push(markdownNode.value);
+  }
+  if (Array.isArray(markdownNode.children)) {
+    for (const child of markdownNode.children) collectReaderVisibleText(child, values);
+  }
+}
+
+export function projectReaderVisibleText(markdown: string): string {
+  const values: string[] = [];
+  collectReaderVisibleText(fromMarkdown(markdown), values);
+  return values.join(' ');
+}
+
+export function countReaderVisibleWords(markdown: string): number {
+  return projectReaderVisibleText(markdown)
+    .match(/[\p{L}\p{N}]+(?:[\p{M}'’-][\p{L}\p{M}\p{N}]+)*/gu)?.length ?? 0;
+}
+
 export function computeReadingMinutes(projectedText: string): number {
-  const wordCount = projectedText.match(/[\p{L}\p{N}]+(?:[’'-][\p{L}\p{N}]+)*/gu)?.length ?? 0;
+  const wordCount = countReaderVisibleWords(projectedText);
   return Math.max(1, Math.ceil(wordCount / 220));
 }
 
@@ -716,6 +740,7 @@ type ReaderInvalidationCoordinator = {
   invalidated: boolean;
   warned: boolean;
   targets: Set<ReaderInvalidationTarget>;
+  invalidateRelease: (changedPath: string) => void;
 };
 
 type ReaderInvalidationRegistration = {
@@ -724,6 +749,44 @@ type ReaderInvalidationRegistration = {
 };
 
 const readerInvalidationCoordinators = new WeakMap<object, Map<string, ReaderInvalidationCoordinator>>();
+const readerInvalidationEvents = ['add', 'change', 'unlink', 'addDir', 'unlinkDir'] as const;
+
+function hasActiveReaderInvalidationListeners(
+  watcher: NonNullable<LoaderContext['watcher']>,
+  coordinator: ReaderInvalidationCoordinator,
+): boolean {
+  return readerInvalidationEvents.every((event) =>
+    watcher.listeners(event).includes(coordinator.invalidateRelease));
+}
+
+function removeReaderInvalidationListeners(
+  watcher: NonNullable<LoaderContext['watcher']>,
+  coordinator: ReaderInvalidationCoordinator,
+): void {
+  for (const event of readerInvalidationEvents) watcher.off(event, coordinator.invalidateRelease);
+}
+
+function createReaderInvalidationCoordinator(watchedPaths: string[]): ReaderInvalidationCoordinator {
+  const coordinator: ReaderInvalidationCoordinator = {
+    invalidated: false,
+    warned: false,
+    targets: new Set(),
+    invalidateRelease: () => undefined,
+  };
+  coordinator.invalidateRelease = (changedPath: string) => {
+    if (!watchedPaths.some((rootPath) => isInsideReleaseRoot(rootPath, changedPath))) return;
+    coordinator.invalidated = true;
+    for (const registeredTarget of coordinator.targets) {
+      if (registeredTarget.loading) registeredTarget.dirtyDuringLoad = true;
+      registeredTarget.store.clear();
+    }
+    if (!coordinator.warned) {
+      coordinator.targets.values().next().value?.logger.warn(READER_RELEASE_RESTART_REQUIRED);
+      coordinator.warned = true;
+    }
+  };
+  return coordinator;
+}
 
 function registerReaderInvalidation(context: LoaderContext): ReaderInvalidationRegistration | undefined {
   const watcher = context.watcher;
@@ -741,6 +804,11 @@ function registerReaderInvalidation(context: LoaderContext): ReaderInvalidationR
   }
 
   let coordinator = watcherCoordinators.get(coordinatorKey);
+  if (coordinator && !hasActiveReaderInvalidationListeners(watcher, coordinator)) {
+    removeReaderInvalidationListeners(watcher, coordinator);
+    watcherCoordinators.delete(coordinatorKey);
+    coordinator = undefined;
+  }
   const target: ReaderInvalidationTarget = {
     store: context.store,
     logger: context.logger,
@@ -748,30 +816,11 @@ function registerReaderInvalidation(context: LoaderContext): ReaderInvalidationR
     dirtyDuringLoad: false,
   };
   if (!coordinator) {
-    const newCoordinator: ReaderInvalidationCoordinator = {
-      invalidated: false,
-      warned: false,
-      targets: new Set([target]),
-    };
+    const newCoordinator = createReaderInvalidationCoordinator(watchedPaths);
+    newCoordinator.targets.add(target);
     coordinator = newCoordinator;
     watcherCoordinators.set(coordinatorKey, newCoordinator);
-    const invalidateRelease = (changedPath: string) => {
-      if (!watchedPaths.some((rootPath) => isInsideReleaseRoot(rootPath, changedPath))) return;
-      newCoordinator.invalidated = true;
-      for (const registeredTarget of newCoordinator.targets) {
-        if (registeredTarget.loading) registeredTarget.dirtyDuringLoad = true;
-        registeredTarget.store.clear();
-      }
-      if (!newCoordinator.warned) {
-        target.logger.warn(READER_RELEASE_RESTART_REQUIRED);
-        newCoordinator.warned = true;
-      }
-    };
-    watcher.on('add', invalidateRelease);
-    watcher.on('change', invalidateRelease);
-    watcher.on('unlink', invalidateRelease);
-    watcher.on('addDir', invalidateRelease);
-    watcher.on('unlinkDir', invalidateRelease);
+    for (const event of readerInvalidationEvents) watcher.on(event, newCoordinator.invalidateRelease);
     watcher.add(watchedPaths);
   } else {
     coordinator.targets.add(target);
