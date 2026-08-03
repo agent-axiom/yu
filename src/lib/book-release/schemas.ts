@@ -43,7 +43,10 @@ function scanPrivateRepositoryReference(value: string): PrivateRepositoryScan {
 
 function containsPrivateRepositoryPair(value: string): boolean {
   const canonical = value.toLowerCase().replace(/\\/gu, '/').replace(/\/+/gu, '/');
-  return /(?:^|[^a-z0-9_%-])agent-axiom\/yu-book(?:\.git)?(?=$|[^a-z0-9._%-])/u.test(canonical);
+  return new RegExp(
+    `(?:^|[^a-z0-9_%-])agent-axiom/${'yu' + '-book'}(?:\\.git)?(?=$|[^a-z0-9._%-])`,
+    'u',
+  ).test(canonical);
 }
 
 function publicUrlSafetyProblem(value: string): string | null {

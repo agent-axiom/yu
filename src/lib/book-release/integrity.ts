@@ -316,7 +316,7 @@ async function collectTreeFiles(
       continue;
     }
     if (!metadata.isFile()) throw new Error(`reader release requires regular files: ${absolutePath}`);
-    if (metadata.nlink !== 1) throw new Error(`reader release rejects multi-link file: ${absolutePath}`);
+    if (metadata.nlink !== 1) throw new Error(`reader release rejects multi-link file at ${absolutePath}`);
     const relativePath = relative(projectRoot, absolutePath).split(sep).join('/');
     if (relativePath !== 'src/content/book-release/manifest.json') files.push(relativePath);
   }

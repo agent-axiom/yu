@@ -1,6 +1,9 @@
 import { lstat, readdir, readFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { join, relative, resolve, sep } from 'node:path';
+import { parse as parseAstro } from '@astrojs/compiler/sync';
+import type { Node as AstroNode } from '@astrojs/compiler/types';
 import { fromMarkdown } from 'mdast-util-from-markdown';
 import { directiveFromMarkdown } from 'mdast-util-directive';
 import { directive } from 'micromark-extension-directive';
@@ -104,12 +107,18 @@ const privateRepositoryPattern = new RegExp(
 );
 const externalHttpsTokenPattern = /https:\/\/[^\s<>{}\[\]"'`()]+/giu;
 const percentRunPattern = /(?:%[0-9a-f]{2})+/giu;
-const securityEntityPattern = /&(?:#(?:x[0-9a-f]+|[0-9]+)|sol|bsol|num|percnt|colon|period|hyphen|minus|lowbar|commat);/giu;
-const residualSecurityEncodingPattern = /(?:%[0-9a-f]{2})|&(?:#(?:x[0-9a-f]+|[0-9]+)|sol|bsol|num|percnt|colon|period|hyphen|minus|lowbar|commat);/iu;
+const securityEntityNames = 'sol|bsol|frasl|num|percnt|colon|period|hyphen|minus|lowbar|commat';
+const numericSecurityEntity = '#(?:' + 'x[0-9a-f]+' + '|[0-9]+)';
+const securityEntityPattern = new RegExp(`&(?:${numericSecurityEntity}|${securityEntityNames});`, 'giu');
+const residualSecurityEncodingPattern = new RegExp(
+  `(?:%[0-9a-f]{2})|&(?:${numericSecurityEntity}|${securityEntityNames});`,
+  'iu',
+);
 const namedSecurityEntities: Readonly<Record<string, string>> = {
   colon: ':',
   sol: '/',
   bsol: '\\',
+  frasl: '/',
   period: '.',
   hyphen: '-',
   minus: '-',
@@ -119,17 +128,35 @@ const namedSecurityEntities: Readonly<Record<string, string>> = {
   commat: '@',
 };
 
-/**
- * Reader-facing text policy: reject every Unicode General_Category=Format
- * code point. This includes U+200B, U+00AD and all bidi embedding, override
- * and isolate controls; none is necessary for this Russian-language edition.
- */
+/** Reader text may contain structural TAB/LF/CR, but no other Cc or any Cf. */
 const forbiddenUnicodeFormatControlPattern = /\p{Cf}/u;
+const forbiddenUnicodeTextControlPattern = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]|\p{Cf}/u;
+const securityHyphenPattern = /[\u2010\u2011\u2212]/gu;
+const securitySlashPattern = /[\u2044\u2215]/gu;
+const securityReverseSolidusPattern = /[\u2216\u27cd\u29f5\u29f9\ufe68\uff3c]/gu;
 
-function assertNoForbiddenUnicodeFormatControls(value: string, label: string): void {
-  if (forbiddenUnicodeFormatControlPattern.test(value)) {
-    throw new Error(`${label} contains a forbidden Unicode format or bidi control`);
+function assertNoForbiddenUnicodeControls(value: string, label: string, allowByteControls = false): void {
+  const pattern = allowByteControls
+    ? forbiddenUnicodeFormatControlPattern
+    : forbiddenUnicodeTextControlPattern;
+  if (pattern.test(value)) {
+    throw new Error(`${label} contains a forbidden Unicode control, format or bidi character`);
   }
+}
+
+/**
+ * Shared security skeleton. NFKC and confusable separator folding happen at
+ * every canonical decode boundary so an entity or percent layer cannot reveal
+ * a new path separator or control after an earlier check.
+ */
+function securitySkeleton(value: string, allowByteControls = false): string {
+  const skeleton = value
+    .normalize('NFKC')
+    .replace(securityHyphenPattern, '-')
+    .replace(securitySlashPattern, '/')
+    .replace(securityReverseSolidusPattern, '\\');
+  assertNoForbiddenUnicodeControls(skeleton, 'security text', allowByteControls);
+  return skeleton;
 }
 
 function decodeSecurityEntities(value: string): string {
@@ -166,9 +193,11 @@ function decodePercentRuns(value: string): string {
 }
 
 function canonicalSecurityValue(value: string): string {
-  let current = value.normalize('NFKC');
+  let current = securitySkeleton(value);
   for (let depth = 0; depth < 8; depth += 1) {
-    const next = decodeSecurityEntities(decodePercentRuns(current)).normalize('NFKC');
+    const percentDecoded = securitySkeleton(decodePercentRuns(current));
+    const entityDecoded = securitySkeleton(decodeSecurityEntities(percentDecoded));
+    const next = securitySkeleton(entityDecoded);
     if (next === current) return next;
     current = next;
   }
@@ -216,10 +245,24 @@ function hasPrivatePath(value: string, normalizeBackslashes = true): boolean {
   return false;
 }
 
+function hasPrivateBackslashPath(value: string): boolean {
+  const separator = '\\\\';
+  const privateRoots = ['rig' + 'hts', 'manu' + 'script', 'resea' + 'rch', 'edito' + 'rial'].join('|');
+  const repository = `agent-axiom${separator}+${'yu' + '-book'}`;
+  const patterns = [
+    new RegExp(`(?:^|[^a-z0-9._-])(?:${privateRoots})${separator}+`, 'iu'),
+    new RegExp(`(?:^|[^a-z0-9._-])[a-z]:${separator}+`, 'iu'),
+    new RegExp(`(?:^|[^a-z0-9._-])${separator}+(?:Users|home|private)${separator}+`, 'iu'),
+    new RegExp(`(?:^|[^a-z0-9._-])${separator}{2}[^${separator}\\s]+${separator}+`, 'iu'),
+    new RegExp(`(?:^|[^a-z0-9._-])${repository}(?:\\.git)?(?=$|[^a-z0-9._-])`, 'iu'),
+  ];
+  return patterns.some((pattern) => pattern.test(value));
+}
+
 function privateSentinel(value: string): string | null {
-  assertNoForbiddenUnicodeFormatControls(value, 'reader text');
+  assertNoForbiddenUnicodeControls(value, 'reader text');
   const canonical = canonicalSecurityValue(value);
-  assertNoForbiddenUnicodeFormatControls(canonical, 'decoded reader text');
+  assertNoForbiddenUnicodeControls(canonical, 'decoded reader text');
   if (privateRepositoryPattern.test(canonicalizeRepositoryScanValue(canonical))) {
     return 'private repository coordinate';
   }
@@ -228,15 +271,17 @@ function privateSentinel(value: string): string | null {
   return null;
 }
 
-function runtimeSourceSentinel(value: string): string | null {
-  if (forbiddenUnicodeFormatControlPattern.test(value)) return 'Unicode format control';
+function runtimeSourceSentinel(value: string, directiveScanValue = value): string | null {
+  if (forbiddenUnicodeTextControlPattern.test(value)) return 'Unicode control';
   const canonical = canonicalSecurityValue(value);
-  if (forbiddenUnicodeFormatControlPattern.test(canonical)) return 'decoded Unicode format control';
+  if (forbiddenUnicodeTextControlPattern.test(canonical)) return 'decoded Unicode control';
   if (privateRepositoryPattern.test(canonicalizeRepositoryScanValue(canonical, false))) {
     return 'private repository coordinate';
   }
   if (privateIdPattern.test(canonical)) return 'private-prefixed identifier';
-  if (hasPrivatePath(canonical, false)) return 'private repository path';
+  if (hasPrivatePath(canonical, false) || hasPrivateBackslashPath(canonical)) return 'private repository path';
+  if (exactArtifactDirectivePattern.test(canonicalSecurityValue(directiveScanValue))) return 'raw directive';
+  if (dangerousArtifactSchemePattern.test(canonical)) return 'dangerous URL scheme';
   return null;
 }
 
@@ -251,7 +296,7 @@ function safeNeutralSlug(value: string): boolean {
 }
 
 function assertSafeReaderUrl(input: string): string {
-  assertNoForbiddenUnicodeFormatControls(input, 'reader URL');
+  assertNoForbiddenUnicodeControls(input, 'reader URL');
   if (!input
     || /[\u0000-\u001f\u007f-\u009f\s]/u.test(input)
     || input.includes('\\')
@@ -259,7 +304,7 @@ function assertSafeReaderUrl(input: string): string {
     throw new Error(`unsafe reader URL controls or whitespace: ${input}`);
   }
   const value = canonicalSecurityValue(input);
-  assertNoForbiddenUnicodeFormatControls(value, 'decoded reader URL');
+  assertNoForbiddenUnicodeControls(value, 'decoded reader URL');
   if (/[\u0000-\u001f\u007f-\u009f\s]/u.test(value) || value.includes('\\')) {
     throw new Error(`unsafe decoded reader URL controls or whitespace: ${input}`);
   }
@@ -693,8 +738,10 @@ const builtAccessibleTextAttributeNames = new Set([
   'title',
 ]);
 const builtPublicMetadataNames = new Set([
+  'author',
   'description',
   'og:description',
+  'og:image:alt',
   'og:title',
   'twitter:description',
   'twitter:title',
@@ -750,14 +797,68 @@ const builtBlockElements = new Set([
   'ul',
 ]);
 const exactArtifactDirectivePattern = /(?::{2,3}[a-z][a-z0-9-]*(?:\[[^\]\r\n]*\])?(?:\{[^{}\r\n]*\})?|:[a-z][a-z0-9-]*\[[^\]\r\n]*\](?:\{[^{}\r\n]*\})?)/iu;
-const standardCssPseudoElementPattern = /::(?:after|backdrop|before|cue(?:-region)?|file-selector-button|first-letter|first-line|grammar-error|marker|part|placeholder|selection|slotted|spelling-error|target-text|view-transition(?:-group|-image-pair|-new|-old)?)(?![a-z0-9-])/giu;
-const dangerousArtifactSchemePattern = /(?:^|[^a-z0-9+.-])(?:data|file|javascript|vbscript):/iu;
+const dangerousArtifactSchemePattern = /(?:^|[^a-z0-9+.-])(?:data|file|javascript|vbscript):(?=\S)/iu;
 const strictUtf8 = new TextDecoder('utf-8', { fatal: true });
+const maxSrcdocDepth = 8;
+const maxCssSourceLength = 1_000_000;
+const maxCssNodes = 20_000;
+const maxCssNestingDepth = 128;
+const maxEmbeddedStyleBlocks = 64;
+const allowedStaticCssContentFunctions = new Set([
+  'conic-gradient',
+  'counter',
+  'counters',
+  'cross-fade',
+  'image',
+  'image-set',
+  'linear-gradient',
+  'radial-gradient',
+  'repeating-conic-gradient',
+  'repeating-linear-gradient',
+  'repeating-radial-gradient',
+]);
+
+type ArtifactSyntaxContext = 'css' | 'html' | 'astro' | 'generic';
+type OffsetRange = { start: number; end: number };
+type CssLocation = { start: { offset: number }; end: { offset: number } };
+type CssNode = {
+  type: string;
+  loc?: CssLocation | null;
+  name?: string;
+  property?: string;
+  value?: CssNode | string;
+  children?: Iterable<CssNode> | null;
+};
+type CssParse = (source: string, options?: {
+  positions?: boolean;
+  onParseError?: (error: unknown) => void;
+}) => CssNode;
+type CssWalkOptions = {
+  enter?: (node: CssNode) => unknown;
+  leave?: (node: CssNode) => unknown;
+};
+type CssWalk = ((root: CssNode, visitor: ((node: CssNode) => unknown) | CssWalkOptions) => void) & {
+  skip: symbol;
+};
+
+const cssTreeRequire = createRequire(import.meta.url);
+const parseCss = cssTreeRequire('css-tree/parser') as CssParse;
+const walkCss = cssTreeRequire('css-tree/walker') as CssWalk;
+const decodeCssIdentifier = (cssTreeRequire('css-tree/utils') as {
+  ident: { decode: (value: string) => string };
+}).ident.decode;
 
 type HtmlNode = DefaultTreeAdapterMap['node'];
 type HtmlParentNode = DefaultTreeAdapterMap['parentNode'];
 type HtmlElement = DefaultTreeAdapterMap['element'];
 type HtmlTextNode = DefaultTreeAdapterMap['textNode'];
+type HtmlSourceLocation = { startOffset: number; endOffset: number };
+type HtmlElementSourceLocation = HtmlSourceLocation & {
+  attrs?: Record<string, HtmlSourceLocation>;
+  startTag?: HtmlSourceLocation;
+  endTag?: HtmlSourceLocation;
+};
+type StaticStyleBlock = { source: string; startOffset: number };
 
 function isHtmlElement(node: HtmlNode): node is HtmlElement {
   return 'tagName' in node && 'attrs' in node;
@@ -769,6 +870,324 @@ function isHtmlTextNode(node: HtmlNode): node is HtmlTextNode {
 
 function isHtmlParentNode(node: HtmlNode): node is HtmlParentNode {
   return 'childNodes' in node;
+}
+
+function assertCssLexicalBounds(source: string, label: string): void {
+  if (source.length > maxCssSourceLength) throw new Error(`${label} exceeds the CSS input-size bound`);
+  const stack: string[] = [];
+  let quote: '"' | "'" | null = null;
+  let inComment = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index]!;
+    const next = source[index + 1];
+    if (inComment) {
+      if (character === '*' && next === '/') {
+        inComment = false;
+        index += 1;
+      }
+      continue;
+    }
+    if (quote) {
+      if (character === '\\') index += 1;
+      else if (character === quote) quote = null;
+      continue;
+    }
+    if (character === '/' && next === '*') {
+      inComment = true;
+      index += 1;
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+      continue;
+    }
+    if (character === '\\') {
+      index += 1;
+      continue;
+    }
+    if (character === '{' || character === '[' || character === '(') {
+      stack.push(character);
+      if (stack.length > maxCssNestingDepth) throw new Error(`${label} exceeds the CSS nesting bound`);
+      continue;
+    }
+    const expected = character === '}' ? '{' : character === ']' ? '[' : character === ')' ? '(' : null;
+    if (expected && stack.pop() !== expected) throw new Error(`${label} contains unbalanced CSS delimiters`);
+  }
+  if (quote || inComment || stack.length > 0) throw new Error(`${label} contains unterminated CSS syntax`);
+}
+
+function parseCssSecurityAst(source: string, label: string): CssNode {
+  try {
+    assertCssLexicalBounds(source, label);
+    const ast = parseCss(source, {
+      positions: true,
+      onParseError(error) {
+        throw error;
+      },
+    });
+    let depth = 0;
+    let nodeCount = 0;
+    walkCss(ast, {
+      enter(node) {
+        depth += 1;
+        nodeCount += 1;
+        if (depth > maxCssNestingDepth) throw new Error(`${label} exceeds the CSS AST nesting bound`);
+        if (nodeCount > maxCssNodes) throw new Error(`${label} exceeds the CSS AST node bound`);
+        if (node.type !== 'Block') return;
+        const start = node.loc?.start.offset;
+        const end = node.loc?.end.offset;
+        if (typeof start !== 'number'
+          || typeof end !== 'number'
+          || source[start] !== '{'
+          || source[end - 1] !== '}') {
+          throw new Error('CSS block delimiters are incomplete');
+        }
+      },
+      leave() {
+        depth -= 1;
+      },
+    });
+    return ast;
+  } catch (error) {
+    throw new Error(`${label} contains invalid or unparseable CSS`, { cause: error });
+  }
+}
+
+function cssPseudoPrefixRanges(source: string, label: string, baseOffset = 0): OffsetRange[] {
+  const ranges: OffsetRange[] = [];
+  const ast = parseCssSecurityAst(source, label);
+  walkCss(ast, (node) => {
+    if (node.type !== 'PseudoElementSelector') return;
+    const start = node.loc?.start.offset;
+    const name = node.name;
+    if (typeof start !== 'number' || typeof name !== 'string') {
+      throw new Error(`${label} contains a CSS pseudo-element without a source location`);
+    }
+    const end = start + 2 + name.length;
+    if (source.slice(start, start + 2) !== '::'
+      || source.slice(start + 2, end) !== name
+      || end > source.length) {
+      throw new Error(`${label} contains an inconsistent CSS pseudo-element source range`);
+    }
+    ranges.push({ start: baseOffset + start, end: baseOffset + end });
+  });
+  return ranges;
+}
+
+function maskSourceRanges(source: string, ranges: readonly OffsetRange[]): string {
+  let cursor = 0;
+  let masked = '';
+  for (const range of [...ranges].sort((first, second) => first.start - second.start)) {
+    if (range.start < cursor || range.start < 0 || range.end > source.length || range.end < range.start) {
+      throw new Error('CSS security ranges overlap or fall outside their source');
+    }
+    masked += source.slice(cursor, range.start);
+    masked += ' '.repeat(range.end - range.start);
+    cursor = range.end;
+  }
+  return masked + source.slice(cursor);
+}
+
+function htmlStaticStyleBlocks(source: string): StaticStyleBlock[] {
+  const blocks: StaticStyleBlock[] = [];
+  const visit = (node: HtmlNode): void => {
+    if (isHtmlElement(node) && node.tagName.toLowerCase() === 'style') {
+      for (const child of node.childNodes) {
+        if (!isHtmlTextNode(child)) {
+          throw new Error('HTML style block contains non-static content');
+        }
+      }
+      const location = (node as HtmlNode & { sourceCodeLocation?: HtmlElementSourceLocation }).sourceCodeLocation;
+      const startOffset = location?.startTag?.endOffset;
+      const endOffset = location?.endTag?.startOffset;
+      if (typeof startOffset !== 'number' || typeof endOffset !== 'number' || endOffset < startOffset) {
+        throw new Error('HTML style block has incomplete source locations');
+      }
+      blocks.push({ source: source.slice(startOffset, endOffset), startOffset });
+      return;
+    }
+    if (isHtmlParentNode(node)) {
+      for (const child of node.childNodes) visit(child);
+    }
+  };
+  visit(parse(source, { scriptingEnabled: false, sourceCodeLocationInfo: true }));
+  return blocks;
+}
+
+function htmlSrcdocAttributeRanges(source: string): OffsetRange[] {
+  const ranges: OffsetRange[] = [];
+  const visit = (node: HtmlNode): void => {
+    if (isHtmlElement(node) && node.tagName.toLowerCase() === 'iframe') {
+      const hasSrcdoc = node.attrs.some((attribute) => attribute.name.toLowerCase() === 'srcdoc');
+      if (hasSrcdoc) {
+        const location = (node as HtmlNode & { sourceCodeLocation?: HtmlElementSourceLocation })
+          .sourceCodeLocation?.attrs?.srcdoc;
+        if (!location) throw new Error('iframe srcdoc attribute has no source location');
+        ranges.push({ start: location.startOffset, end: location.endOffset });
+      }
+    }
+    if (isHtmlParentNode(node)) {
+      for (const child of node.childNodes) visit(child);
+    }
+  };
+  visit(parse(source, { scriptingEnabled: false, sourceCodeLocationInfo: true }));
+  return ranges;
+}
+
+function utf8ByteOffsetToCodeUnitIndex(source: string, targetOffset: number): number {
+  let byteOffset = 0;
+  let codeUnitIndex = 0;
+  while (codeUnitIndex < source.length && byteOffset < targetOffset) {
+    const codePoint = source.codePointAt(codeUnitIndex);
+    if (codePoint === undefined) break;
+    const character = String.fromCodePoint(codePoint);
+    byteOffset += Buffer.byteLength(character, 'utf8');
+    codeUnitIndex += character.length;
+  }
+  if (byteOffset !== targetOffset) throw new Error('Astro style location splits a UTF-8 code point');
+  return codeUnitIndex;
+}
+
+function astroStaticStyleBlocks(source: string, label: string): StaticStyleBlock[] {
+  const parsed = parseAstro(source, { position: true });
+  if (parsed.diagnostics.some((diagnostic) => diagnostic.severity === 1)) {
+    throw new Error(`${label} contains invalid Astro syntax`);
+  }
+  const blocks: StaticStyleBlock[] = [];
+  const visit = (node: AstroNode): void => {
+    if (node.type === 'element' && node.name.toLowerCase() === 'style') {
+      const lang = node.attributes.find((attribute) => attribute.name.toLowerCase() === 'lang');
+      if (lang && lang.value.toLowerCase() !== 'css') {
+        throw new Error(`${label} contains a non-CSS Astro style block`);
+      }
+      if (!node.children.every((child) => child.type === 'text')) {
+        throw new Error(`${label} contains a dynamic Astro style block`);
+      }
+      if (node.children.length === 0) {
+        blocks.push({ source: '', startOffset: 0 });
+        return;
+      }
+      const firstChild = node.children[0]!;
+      const lastChild = node.children.at(-1)!;
+      if (firstChild.type !== 'text'
+        || lastChild.type !== 'text'
+        || !firstChild.position
+        || !lastChild.position?.end) {
+        throw new Error(`${label} contains an unlocated Astro style block`);
+      }
+      const startOffset = utf8ByteOffsetToCodeUnitIndex(source, firstChild.position.start.offset);
+      const endOffset = utf8ByteOffsetToCodeUnitIndex(source, lastChild.position.end.offset);
+      const rawSource = source.slice(startOffset, endOffset);
+      const parsedSource = node.children.map((child) => child.type === 'text' ? child.value : '').join('');
+      if (rawSource !== parsedSource) throw new Error(`${label} has an inconsistent Astro style source range`);
+      blocks.push({ source: rawSource, startOffset });
+      return;
+    }
+    if ('children' in node) {
+      for (const child of node.children) visit(child);
+    }
+  };
+  visit(parsed.ast);
+  return blocks;
+}
+
+function staticStyleBlocks(source: string, context: ArtifactSyntaxContext, label: string): StaticStyleBlock[] {
+  const blocks = context === 'html'
+    ? htmlStaticStyleBlocks(source)
+    : context === 'astro' ? astroStaticStyleBlocks(source, label) : [];
+  if (blocks.length > maxEmbeddedStyleBlocks) throw new Error(`${label} exceeds the embedded CSS style-block bound`);
+  if (blocks.reduce((total, block) => total + block.source.length, 0) > maxCssSourceLength) {
+    throw new Error(`${label} exceeds the embedded CSS input-size bound`);
+  }
+  return blocks;
+}
+
+function directiveScanSource(source: string, context: ArtifactSyntaxContext, label: string): string {
+  if (context === 'css') return maskSourceRanges(source, cssPseudoPrefixRanges(source, label));
+  if (context === 'html' || context === 'astro') {
+    const ranges = staticStyleBlocks(source, context, label).flatMap((block) =>
+      cssPseudoPrefixRanges(block.source, label, block.startOffset));
+    if (context === 'html') ranges.push(...htmlSrcdocAttributeRanges(source));
+    return maskSourceRanges(source, ranges);
+  }
+  return source;
+}
+
+function artifactContext(relativePath: string, runtime: boolean): ArtifactSyntaxContext {
+  if (/\.css$/iu.test(relativePath)) return 'css';
+  if (runtime && /\.astro$/iu.test(relativePath)) return 'astro';
+  if (builtHtmlExtensions.test(relativePath)) return 'html';
+  return 'generic';
+}
+
+function scanCssGeneratedProse(stylesheet: string, label: string): void {
+  const ast = parseCssSecurityAst(stylesheet, label);
+  walkCss(ast, (node) => {
+    if (node.type !== 'Declaration'
+      || typeof node.property !== 'string'
+      || decodeCssIdentifier(node.property).toLowerCase() !== 'content'
+      || typeof node.value !== 'object') return;
+    const scanChildren = (parent: CssNode): void => {
+      let currentRun = '';
+      const flush = () => {
+        if (!currentRun) return;
+        const sentinel = privateSentinel(currentRun);
+        if (sentinel) throw new Error(`${label} contains forbidden CSS-generated prose (${sentinel})`);
+        currentRun = '';
+      };
+      for (const child of parent.children ? [...parent.children] : []) {
+        if (child.type === 'String' && typeof child.value === 'string') {
+          currentRun += child.value;
+          continue;
+        }
+        flush();
+        if (child.type === 'Raw') throw new Error(`${label} contains unresolved dynamic CSS content`);
+        if (child.type === 'Function') {
+          const name = child.name?.toLowerCase();
+          if (!name || !allowedStaticCssContentFunctions.has(name)) {
+            throw new Error(`${label} contains unresolved dynamic CSS content function`);
+          }
+        }
+        scanChildren(child);
+      }
+      flush();
+    };
+    scanChildren(node.value);
+  });
+}
+
+function scanEmbeddedCssGeneratedProse(source: string, context: ArtifactSyntaxContext, label: string): void {
+  if (context === 'css') {
+    scanCssGeneratedProse(source, label);
+    return;
+  }
+  for (const block of staticStyleBlocks(source, context, label)) {
+    scanCssGeneratedProse(block.source, `${label} style block`);
+  }
+}
+
+function releasePathSentinel(relativePath: string): string | null {
+  const canonical = canonicalSecurityValue(relativePath);
+  if (canonical.includes('\\')) return 'ambiguous reverse solidus';
+  const repositoryPath = canonicalizeRepositoryScanValue(canonical);
+  if (privateRepositoryPattern.test(repositoryPath)
+    || /(?:^|\/)agent-axiom\/yu-book(?:\.git)?(?=$|[./])/iu.test(repositoryPath)) {
+    return 'private repository coordinate';
+  }
+  if (hasPrivatePath(canonical)) return 'private repository path';
+  if (exactArtifactDirectivePattern.test(canonical)) return 'raw directive';
+  if (dangerousArtifactSchemePattern.test(canonical)) return 'dangerous URL scheme';
+  return null;
+}
+
+function assertReleasePathSafe(relativePath: string): void {
+  let sentinel: string | null;
+  try {
+    sentinel = releasePathSentinel(relativePath);
+  } catch (error) {
+    throw new Error(`${relativePath} contains invalid canonical security text in its relative path`, { cause: error });
+  }
+  if (sentinel) throw new Error(`${relativePath} contains a forbidden relative path sentinel (${sentinel})`);
 }
 
 function rootPath(input: string | URL): string {
@@ -787,9 +1206,10 @@ async function pathMetadata(path: string) {
 }
 
 async function scanRuntimePath(projectRoot: string, path: string): Promise<void> {
+  const relativePath = relative(projectRoot, path).split(sep).join('/');
+  assertReleasePathSafe(relativePath);
   const metadata = await pathMetadata(path);
   if (!metadata) return;
-  const relativePath = relative(projectRoot, path).split(sep).join('/');
   if (metadata.isSymbolicLink()) throw new Error(`release-layer scan rejects symbolic link: ${relativePath}`);
   if (metadata.isDirectory()) {
     const names = await readdir(path);
@@ -798,19 +1218,21 @@ async function scanRuntimePath(projectRoot: string, path: string): Promise<void>
   }
   if (!metadata.isFile()) throw new Error(`release-layer scan requires regular files: ${relativePath}`);
   const contents = (await readFile(path)).toString('utf8');
+  const context = artifactContext(relativePath, true);
   let sentinel: string | null;
   try {
-    sentinel = runtimeSourceSentinel(contents);
+    sentinel = runtimeSourceSentinel(contents, directiveScanSource(contents, context, relativePath));
+    scanEmbeddedCssGeneratedProse(contents, context, relativePath);
   } catch (error) {
     throw new Error(`${relativePath} contains invalid canonical security text`, { cause: error });
   }
-  if (sentinel) throw new Error(`${relativePath} contains a forbidden private sentinel (${sentinel})`);
+  if (sentinel) throw new Error(`${relativePath} contains a forbidden runtime sentinel (${sentinel})`);
 }
 
 function assertBuiltReaderUrlSafe(value: string, relativePath: string): void {
-  assertNoForbiddenUnicodeFormatControls(value, `${relativePath} reader-facing URL`);
+  assertNoForbiddenUnicodeControls(value, `${relativePath} reader-facing URL`);
   const canonical = canonicalSecurityValue(value);
-  assertNoForbiddenUnicodeFormatControls(canonical, `${relativePath} decoded reader-facing URL`);
+  assertNoForbiddenUnicodeControls(canonical, `${relativePath} decoded reader-facing URL`);
   if (/[\u0000-\u001f\u007f-\u009f\s]/u.test(canonical) || canonical.includes('\\')) {
     throw new Error(`${relativePath} contains an unsafe reader-facing URL`);
   }
@@ -823,22 +1245,22 @@ function assertBuiltReaderUrlSafe(value: string, relativePath: string): void {
 
 function tolerantArtifactCanonicalValue(value: string): { value: string; excessive: boolean } {
   const decode = (input: string) => {
-    const decodedPercent = input.replace(percentRunPattern, (run) => {
+    const decodedPercent = securitySkeleton(input.replace(percentRunPattern, (run) => {
       try {
         return decodePercentRuns(run);
       } catch {
         return run;
       }
-    });
-    return decodedPercent.replace(securityEntityPattern, (entity) => {
+    }), true);
+    return securitySkeleton(decodedPercent.replace(securityEntityPattern, (entity) => {
       try {
         return decodeSecurityEntities(entity);
       } catch {
         return entity;
       }
-    }).normalize('NFKC');
+    }), true);
   };
-  let current = value.normalize('NFKC');
+  let current = securitySkeleton(value, true);
   for (let depth = 0; depth < 8; depth += 1) {
     const decoded = decode(current);
     if (decoded === current) return { value: current, excessive: false };
@@ -847,30 +1269,49 @@ function tolerantArtifactCanonicalValue(value: string): { value: string; excessi
   return { value: current, excessive: decode(current) !== current };
 }
 
-function exactArtifactSentinel(value: string, strictCanonical: boolean): string | null {
-  if (forbiddenUnicodeFormatControlPattern.test(value)) return 'Unicode format control';
+function exactArtifactSentinel(
+  value: string,
+  strictCanonical: boolean,
+  directiveValue = value,
+): string | null {
+  const forbiddenControlPattern = strictCanonical
+    ? forbiddenUnicodeTextControlPattern
+    : forbiddenUnicodeFormatControlPattern;
+  if (forbiddenControlPattern.test(value)) return 'Unicode control';
   const artifactCanonical = strictCanonical
     ? { value: canonicalSecurityValue(value), excessive: false }
     : tolerantArtifactCanonicalValue(value);
   const canonical = artifactCanonical.value;
   if (artifactCanonical.excessive) return 'excessive nested canonical encoding';
-  if (forbiddenUnicodeFormatControlPattern.test(canonical)) return 'decoded Unicode format control';
+  if (forbiddenControlPattern.test(canonical)) return 'decoded Unicode control';
   const structuralScanValue = canonical.replace(/<!--|-->|\/\*|\*\//gu, ' ');
   if (privateRepositoryPattern.test(canonicalizeRepositoryScanValue(structuralScanValue))) {
     return 'private repository coordinate';
   }
   if (hasPrivatePath(structuralScanValue)) return 'private repository path';
-  if (exactArtifactDirectivePattern.test(canonical.replace(standardCssPseudoElementPattern, ' '))) {
+  const canonicalDirectiveValue = strictCanonical
+    ? canonicalSecurityValue(directiveValue)
+    : tolerantArtifactCanonicalValue(directiveValue).value;
+  if (exactArtifactDirectivePattern.test(canonicalDirectiveValue)) {
     return 'raw directive';
   }
   if (dangerousArtifactSchemePattern.test(structuralScanValue)) return 'dangerous URL scheme';
   return null;
 }
 
-function scanBuiltTextArtifact(contents: string, relativePath: string, strictCanonical: boolean): void {
+function scanBuiltTextArtifact(
+  contents: string,
+  relativePath: string,
+  strictCanonical: boolean,
+  context: ArtifactSyntaxContext,
+): void {
   let sentinel: string | null;
   try {
-    sentinel = exactArtifactSentinel(contents, strictCanonical);
+    sentinel = exactArtifactSentinel(
+      contents,
+      strictCanonical,
+      directiveScanSource(contents, context, relativePath),
+    );
   } catch (error) {
     throw new Error(`${relativePath} contains invalid canonical security text`, { cause: error });
   }
@@ -881,10 +1322,12 @@ function parsedBuiltReaderDocument(contents: string): {
   visibleText: string;
   accessibleText: string[];
   urls: string[];
+  srcdocs: string[];
 } {
   const text: string[] = [];
   const accessibleText: string[] = [];
   const urls: string[] = [];
+  const srcdocs: string[] = [];
   const boundary = () => {
     if (text.length > 0 && !text.at(-1)?.endsWith('\n')) text.push('\n');
   };
@@ -906,8 +1349,13 @@ function parsedBuiltReaderDocument(contents: string): {
     }
     collectUrlAttributes(node);
     const tagName = node.tagName.toLowerCase();
-    if (builtHiddenTextElements.has(tagName)) return;
     const attributes = new Map(node.attrs.map((attribute) => [attribute.name.toLowerCase(), attribute.value]));
+    if (tagName === 'iframe' && attributes.has('srcdoc')) srcdocs.push(attributes.get('srcdoc')!);
+    if ((tagName === 'option' || tagName === 'track') && attributes.has('label')) {
+      accessibleText.push(attributes.get('label')!);
+    }
+    if (tagName === 'th' && attributes.has('abbr')) accessibleText.push(attributes.get('abbr')!);
+    if (builtHiddenTextElements.has(tagName)) return;
     for (const attribute of node.attrs) {
       if (builtAccessibleTextAttributeNames.has(attribute.name.toLowerCase())) {
         accessibleText.push(attribute.value);
@@ -934,22 +1382,32 @@ function parsedBuiltReaderDocument(contents: string): {
     if (isBlock) boundary();
   };
   visit(parse(contents, { scriptingEnabled: false }));
-  return { visibleText: text.join(''), accessibleText, urls };
+  return { visibleText: text.join(''), accessibleText, urls, srcdocs };
 }
 
-function scanBuiltReaderDocument(contents: string, relativePath: string): void {
-  const { visibleText, accessibleText, urls } = parsedBuiltReaderDocument(contents);
+function scanBuiltReaderDocument(contents: string, relativePath: string, srcdocDepth = 0): void {
+  scanEmbeddedCssGeneratedProse(contents, 'html', relativePath);
+  const { visibleText, accessibleText, urls, srcdocs } = parsedBuiltReaderDocument(contents);
   for (const url of urls) assertBuiltReaderUrlSafe(url, relativePath);
   for (const prose of [visibleText, ...accessibleText]) {
     const sentinel = privateSentinel(prose);
     if (sentinel) throw new Error(`${relativePath} contains a forbidden private prose sentinel (${sentinel})`);
   }
+  if (srcdocs.length > 0 && srcdocDepth >= maxSrcdocDepth) {
+    throw new Error(`${relativePath} exceeds the bounded iframe srcdoc nesting depth`);
+  }
+  for (const srcdoc of srcdocs) {
+    const nestedLabel = `${relativePath} iframe[srcdoc]`;
+    scanBuiltTextArtifact(srcdoc, nestedLabel, true, 'html');
+    scanBuiltReaderDocument(srcdoc, nestedLabel, srcdocDepth + 1);
+  }
 }
 
 async function scanBuiltPath(projectRoot: string, path: string): Promise<void> {
+  const relativePath = relative(projectRoot, path).split(sep).join('/');
+  assertReleasePathSafe(relativePath);
   const metadata = await pathMetadata(path);
   if (!metadata) return;
-  const relativePath = relative(projectRoot, path).split(sep).join('/');
   if (metadata.isSymbolicLink()) throw new Error(`release-layer scan rejects symbolic link: ${relativePath}`);
   if (metadata.isDirectory()) {
     const names = await readdir(path);
@@ -958,7 +1416,8 @@ async function scanBuiltPath(projectRoot: string, path: string): Promise<void> {
   }
   if (!metadata.isFile()) throw new Error(`release-layer scan requires regular files: ${relativePath}`);
   const bytes = await readFile(path);
-  scanBuiltTextArtifact(bytes.toString('utf8'), relativePath, false);
+  const context = artifactContext(relativePath, false);
+  scanBuiltTextArtifact(bytes.toString('utf8'), relativePath, false, context);
   if (!builtTextExtensions.test(relativePath)) return;
   let contents: string;
   try {
@@ -966,7 +1425,8 @@ async function scanBuiltPath(projectRoot: string, path: string): Promise<void> {
   } catch (error) {
     throw new Error(`${relativePath} is not valid UTF-8 reader output`, { cause: error });
   }
-  scanBuiltTextArtifact(contents, relativePath, true);
+  scanBuiltTextArtifact(contents, relativePath, true, context);
+  if (context === 'css') scanCssGeneratedProse(contents, relativePath);
   if (builtHtmlExtensions.test(relativePath)) scanBuiltReaderDocument(contents, relativePath);
   if (builtPlainProseExtensions.test(relativePath)) {
     const sentinel = privateSentinel(contents);

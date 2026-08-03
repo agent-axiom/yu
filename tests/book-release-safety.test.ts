@@ -27,6 +27,32 @@ function nestedPercentEncoding(value: string, depth: number): string {
   return encoded;
 }
 
+const privateSeparatorVariants = [
+  ['named hyphen', 'claim&hyphen;secret'],
+  ['named minus', 'claim&minus;secret'],
+  ['numeric hyphen', 'claim&#x2010;secret'],
+  ['numeric minus', 'claim&#x2212;secret'],
+  ['named fraction slash', 'research&frasl;claims/secret'],
+  ['literal division slash', 'research∕claims/secret'],
+  ['literal fraction slash repository', 'agent-axiom⁄yu-book'],
+  ['literal set-minus reverse solidus', 'research∖claims/secret'],
+  ['literal reverse-solidus operator repository', 'agent-axiom⧵yu-book'],
+  ['literal big reverse solidus', 'research⧹claims/secret'],
+  ['percent-encoded fraction slash repository', 'agent-axiom%E2%81%84yu-book'],
+] as const;
+
+function escapeHtmlAttribute(value: string): string {
+  return value.replaceAll('&', '&amp;').replaceAll('"', '&quot;');
+}
+
+function nestedSrcdoc(depth: number, leaf: string): string {
+  let document = leaf;
+  for (let index = 0; index < depth; index += 1) {
+    document = `<iframe srcdoc="${escapeHtmlAttribute(document)}"></iframe>`;
+  }
+  return document;
+}
+
 describe('reader Markdown safety', () => {
   it.each([
     ['raw HTML', '<aside>Скрытый блок</aside>'],
@@ -99,6 +125,18 @@ describe('reader Markdown safety', () => {
     'Leaked agent-axiom/**yu-book** coordinate remains.',
   ])('rejects private prose sentinel: %s', (markdown) => {
     expect(() => assertReaderMarkdownSafe(markdown)).toThrow(/private|sentinel|reader/iu);
+  });
+
+  it.each(privateSeparatorVariants)('rejects a security-separator alias in Markdown: %s', (_label, value) => {
+    expect(() => assertReaderMarkdownSafe(`Leaked ${value} remains.`)).toThrow(/private|sentinel|reader/iu);
+  });
+
+  it.each([
+    ['NUL', `Visible\u0000text`],
+    ['escape', `Visible\u001Btext`],
+    ['C1 next-line', `Visible\u0085text`],
+  ])('rejects Unicode control %s in reader Markdown', (_label, markdown) => {
+    expect(() => assertReaderMarkdownSafe(markdown)).toThrow(/Unicode|control|unsafe/iu);
   });
 
   it.each([
@@ -220,6 +258,18 @@ describe('record prose safety is structural, not a blanket public-ID ban', () =>
       media: [],
       ...snapshot,
     })).toThrow(/private|sentinel/iu);
+  });
+
+  it.each(privateSeparatorVariants)('rejects a security-separator alias in record prose: %s', (_label, value) => {
+    expect(() => assertReaderProseFieldsSafe({
+      notes: [{ ...validNote, statement: `Leaked ${value} remains.` }],
+    })).toThrow(/private|sentinel|reader/iu);
+  });
+
+  it('rejects a Unicode Cc control in record prose', () => {
+    expect(() => assertReaderProseFieldsSafe({
+      objects: [{ ...validObject, culture: `Han\u0007China` }],
+    })).toThrow(/Unicode|control|unsafe/iu);
   });
 
   it.each([
@@ -354,6 +404,32 @@ describe('release-layer sentinel scan', () => {
     }
   });
 
+  it.each(privateSeparatorVariants.flatMap(([variantLabel, value]) => [
+    [`${variantLabel} in visible text`, `<p>${value}</p>`],
+    [`${variantLabel} in ARIA text`, `<button aria-label="${value}">Jade</button>`],
+  ]))('rejects a security-separator alias in parsed %s', async (_label, markup) => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-dist-separator-'));
+    try {
+      await writeLayerFile(root, 'dist/book/index.html', markup);
+      await expect(scanReaderReleaseLayers(root)).rejects.toThrow(/private|sentinel|prose|index\.html/iu);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['visible text', `<p>Jade\u001Bsecret</p>`],
+    ['ARIA text', `<button aria-label="Jade\u001Bsecret">Jade</button>`],
+  ])('rejects a Unicode Cc control in parsed %s', async (_label, markup) => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-dist-control-'));
+    try {
+      await writeLayerFile(root, 'dist/book/index.html', markup);
+      await expect(scanReaderReleaseLayers(root)).rejects.toThrow(/Unicode|control|unsafe|index\.html/iu);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     ['image alternative text', '<img src="/jade.webp" alt="claim-secret">'],
     ['element title', '<span title="object-secret">Нефрит</span>'],
@@ -365,11 +441,41 @@ describe('release-layer sentinel scan', () => {
     ['button input value', '<input type="button" value="media-secret">'],
     ['description metadata', '<meta name="description" content="interlude-secret"><main>Нефрит</main>'],
     ['no-script fallback', '<noscript><p>claim-<em>secret</em></p></noscript>'],
+    ['option label', '<select><option label="claim-secret">Jade</option></select>'],
+    ['track label', '<video><track label="claim-secret"></video>'],
+    ['table-header abbreviation', '<table><tr><th abbr="claim-secret">Jade</th></tr></table>'],
+    ['Open Graph image alternative', '<meta property="og:image:alt" content="claim-secret"><main>Jade</main>'],
+    ['author metadata', '<meta name="author" content="claim-secret"><main>Jade</main>'],
   ])('rejects a private ID in accessible %s', async (_label, markup) => {
     const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-dist-accessible-'));
     try {
       await writeLayerFile(root, 'dist/book/index.html', markup);
       await expect(scanReaderReleaseLayers(root)).rejects.toThrow(/private|sentinel|prose|index\.html/iu);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['visible prose', '<p>claim-secret</p>'],
+    ['ARIA prose', '<button aria-label="claim-secret">Jade</button>'],
+    ['reader URL', '<a href="javascript:alert(1)">Jade</a>'],
+    ['generated CSS prose', '<style>.jade::before{content:"claim-" "secret"}</style><main>Jade</main>'],
+  ])('recursively rejects unsafe iframe srcdoc %s', async (_label, nestedDocument) => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-srcdoc-'));
+    try {
+      await writeLayerFile(root, 'dist/book/index.html', nestedSrcdoc(2, nestedDocument));
+      await expect(scanReaderReleaseLayers(root)).rejects.toThrow(/private|sentinel|prose|URL|scheme|CSS|srcdoc|index\.html/iu);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed when iframe srcdoc nesting exceeds the bounded depth', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-srcdoc-depth-'));
+    try {
+      await writeLayerFile(root, 'dist/book/index.html', nestedSrcdoc(10, '<p>Jade</p>'));
+      await expect(scanReaderReleaseLayers(root)).rejects.toThrow(/srcdoc|depth|nested|index\.html/iu);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -400,6 +506,129 @@ describe('release-layer sentinel scan', () => {
         '<main><p>Живой нефрит</p></main>',
       ].join(''));
       await expect(scanReaderReleaseLayers(root)).resolves.toBeUndefined();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['adjacent strings', '.jade::before{content:"claim-" "secret"}'],
+    ['escaped adjacent strings', String.raw`.jade::marker{content:"claim\2d " "secret"}`],
+    ['escaped property name', String.raw`.jade::before{\63 ontent:"claim\2d secret"}`],
+    ['style-block adjacent strings', '<style>.jade::before{content:"agent-axiom" "/yu-book"}</style><main>Jade</main>'],
+    [
+      'style-block escaped property name',
+      String.raw`<style>.jade::before{con\74 ent:"claim\2d secret"}</style><main>Jade</main>`,
+    ],
+    ['generated attr()', '.jade::before{content:attr(data-label)}'],
+    ['generated var()', '.jade::before{content:var(--reader-label)}'],
+    ['generated env()', '.jade::before{content:env(reader-label)}'],
+    ['nested strings in an unknown function', '.jade::before{content:foo("claim-" "secret")}'],
+    ['nested strings in a static image function', '.jade::before{content:image("claim-" "secret")}'],
+    ['unknown dynamic function', '.jade::before{content:target-text(url)}'],
+    ['excessively encoded generated prose', `.jade::before{content:"${nestedPercentEncoding('claim-secret', 9)}"}`],
+    ['nested directive in pseudo arguments', '::highlight(::private){color:inherit}'],
+    ['malformed stylesheet', '.jade::before{content:"safe"'],
+  ])('rejects unsafe CSS-generated prose in %s', async (_label, stylesheet) => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-css-content-'));
+    try {
+      const isDocument = stylesheet.startsWith('<style>');
+      await writeLayerFile(root, isDocument ? 'dist/book/index.html' : 'dist/book/styles.css', stylesheet);
+      await expect(scanReaderReleaseLayers(root)).rejects.toThrow(/private|sentinel|CSS|content|attr|index\.html|styles\.css/iu);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['custom highlight', '::highlight(search){color:inherit}'],
+    ['functional part', '.jade::part(label){color:inherit}'],
+    ['standard pseudo and safe generated prose', '.jade::before{content:"safe jade"}'],
+    ['escaped standard pseudo', String.raw`.jade::be\66 ore{content:"safe jade"}`],
+    ['safe counter content', '.jade::before{content:counter(chapter) ". "}'],
+  ])('accepts syntactically valid CSS pseudo-elements: %s', async (_label, stylesheet) => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-css-pseudo-'));
+    try {
+      await writeLayerFile(root, 'dist/book/styles.css', stylesheet);
+      await expect(scanReaderReleaseLayers(root)).resolves.toBeUndefined();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts a legitimate pseudo-element in a static Astro style block', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-astro-pseudo-'));
+    try {
+      await writeLayerFile(root, 'src/layouts/Reader.astro', [
+        '---',
+        'const title = "玉 · Jade";',
+        '---',
+        '<main>{title} — нефрит</main>',
+        '<style>::highlight(search){color:inherit}</style>',
+      ].join('\n'));
+      await expect(scanReaderReleaseLayers(root)).resolves.toBeUndefined();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects escaped CSS content property names in a static Astro style block', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-astro-content-escape-'));
+    try {
+      await writeLayerFile(root, 'src/layouts/Reader.astro', [
+        '<main>Jade</main>',
+        String.raw`<style>.jade::before{\63 ontent:"claim\2d secret"}</style>`,
+      ].join('\n'));
+      await expect(scanReaderReleaseLayers(root)).rejects.toThrow(/private|sentinel|CSS|content|Reader\.astro/iu);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts safe CSS pseudo-elements only after recursively validating iframe srcdoc', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-safe-srcdoc-css-'));
+    try {
+      await writeLayerFile(root, 'dist/book/index.html', nestedSrcdoc(
+        2,
+        '<style>.jade::before{content:"safe jade"}</style><main>Jade</main>',
+      ));
+      await expect(scanReaderReleaseLayers(root)).resolves.toBeUndefined();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['stylesheet source size', 'dist/book/styles.css', ' '.repeat(1_000_001)],
+    ['stylesheet node count', 'dist/book/styles.css', '.x{}'.repeat(20_001)],
+    [
+      'stylesheet nesting depth',
+      'dist/book/styles.css',
+      `${'@media all{'.repeat(140)}.jade{color:inherit}${'}'.repeat(140)}`,
+    ],
+    ['embedded empty style-block count', 'dist/book/index.html', '<style></style>'.repeat(65)],
+  ])('rejects an adversarial CSS %s bound', async (_label, path, contents) => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-css-bound-'));
+    try {
+      await writeLayerFile(root, path, contents);
+      await expect(scanReaderReleaseLayers(root)).rejects.toThrow(/CSS|bound|size|node|nest|style|index\.html|styles\.css/iu);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['HTML pseudo lookalike', 'dist/book/index.html', '<p>::before</p>'],
+    ['HTML functional lookalike', 'dist/book/index.html', '<p>::part[label]</p>'],
+    ['JavaScript pseudo lookalike', 'dist/book/runtime.js', 'const value = "::selection";'],
+    ['JavaScript directive-shaped pseudo', 'dist/book/runtime.js', 'const value = "::before{id=secret}";'],
+    ['CSS string directive', 'dist/book/styles.css', '.jade{content:"::before"}'],
+    ['CSS comment directive', 'dist/book/styles.css', '/* ::private */ .jade{color:inherit}'],
+  ])('rejects directive syntax outside a CSS selector: %s', async (_label, path, contents) => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-context-directive-'));
+    try {
+      await writeLayerFile(root, path, contents);
+      await expect(scanReaderReleaseLayers(root)).rejects.toThrow(/directive|forbidden|index\.html|runtime\.js|styles\.css/iu);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -508,6 +737,70 @@ describe('release-layer sentinel scan', () => {
     try {
       await writeLayerFile(root, path, contents);
       await expect(scanReaderReleaseLayers(root)).rejects.toThrow(/private|sentinel|Unicode|format|control|canonical|encoded|book\.css/iu);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each(privateSeparatorVariants)('rejects a security-separator alias in runtime source: %s', async (_label, value) => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-runtime-separator-'));
+    try {
+      await writeLayerFile(root, 'src/pages/book/separator.astro', `<p>${value}</p>`);
+      await expect(scanReaderReleaseLayers(root)).rejects.toThrow(/private|sentinel|separator\.astro/iu);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['Windows user path', 'const value = String.raw`C:\\Users\\reader\\private.md`;'],
+    ['UNC path', 'const value = String.raw`\\\\server\\share\\private.md`;'],
+    ['backslash private root', 'const value = String.raw`research\\claims\\secret`;'],
+    ['raw directive', 'const value = "::private";'],
+    ['JavaScript scheme', 'const value = "javascript:alert(1)";'],
+    ['data scheme', 'const value = "data:text/html,secret";'],
+    ['file scheme', 'const value = "file:///Users/reader/private.md";'],
+    ['VBScript scheme', 'const value = "vbscript:msgbox(1)";'],
+    ['C0 control', `const value = "jade\u001Bsecret";`],
+  ])('rejects an unsafe runtime source boundary: %s', async (_label, contents) => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-runtime-boundary-'));
+    try {
+      await writeLayerFile(root, 'src/pages/book/boundary.ts', contents);
+      await expect(scanReaderReleaseLayers(root)).rejects.toThrow(/private|sentinel|directive|scheme|Unicode|control|boundary\.ts/iu);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['built private path', 'dist/book/research∕claims/secret.txt'],
+    ['built repository coordinate', 'dist/book/agent-axiom⁄yu-book.txt'],
+    ['built raw directive', 'dist/book/::private.txt'],
+    ['built dangerous scheme', 'dist/book/javascript:payload.js'],
+    ['built Unicode control', `dist/book/jade\u200Bsecret.txt`],
+    ['built C0 control', `dist/book/jade\u001Bsecret.txt`],
+    ['runtime private path', 'src/pages/book/research∕claims/secret.astro'],
+    ['runtime repository coordinate', 'src/pages/book/agent-axiom⁄yu-book.astro'],
+    ['runtime raw directive', 'src/pages/book/::private.astro'],
+    ['runtime dangerous scheme', 'src/pages/book/data:payload.astro'],
+    ['runtime Unicode control', `src/pages/book/jade\u200Bsecret.astro`],
+    ['runtime C0 control', `src/pages/book/jade\u001Bsecret.astro`],
+  ])('rejects a forbidden relative path name: %s', async (_label, path) => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-path-name-'));
+    try {
+      await writeLayerFile(root, path, 'Jade');
+      await expect(scanReaderReleaseLayers(root)).rejects.toThrow(/path|private|repository|directive|scheme|Unicode|control/iu);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('allows neutral public IDs in runtime and built relative path names', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-public-path-name-'));
+    try {
+      await writeLayerFile(root, 'src/pages/book/source-museum.astro', '<main>Jade</main>');
+      await writeLayerFile(root, 'dist/book/object-jade-suit/index.html', '<main>Jade</main>');
+      await expect(scanReaderReleaseLayers(root)).resolves.toBeUndefined();
     } finally {
       await rm(root, { recursive: true, force: true });
     }
