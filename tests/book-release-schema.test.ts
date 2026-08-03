@@ -821,6 +821,45 @@ describe('production reader collection loaders', () => {
     }
   });
 
+  it('keeps an invalidated watcher blocked after Astro removes tracked listeners', async () => {
+    const factories = await loadFactories();
+    const tree = await createReleaseTree();
+    const syntheticWatcher = createMultiListenerWatcher();
+    const initialStores = Array.from({ length: 6 }, () => createMemoryStore());
+    const logs: string[] = [];
+    try {
+      await Promise.all(createSixReaderLoaders(factories).map((loader, index) => loader.load(
+        createLoaderContext(tree.root, initialStores[index], syntheticWatcher.watcher, logs),
+      )));
+      syntheticWatcher.emit('unlinkDir', join(tree.rootPath, 'src/content/book-release'));
+      expect(initialStores.every((store) => store.values().length === 0)).toBe(true);
+      expect(logs.filter((message) => /restart required/iu.test(message))).toHaveLength(1);
+
+      syntheticWatcher.removeAllTrackedListeners();
+      const blockedStores = Array.from({ length: 6 }, () => createMemoryStore());
+      const blockedResults = await Promise.allSettled(createSixReaderLoaders(factories).map((loader, index) => loader.load(
+        createLoaderContext(tree.root, blockedStores[index], syntheticWatcher.watcher, logs),
+      )));
+      expect(blockedResults.every((result) => result.status === 'rejected')).toBe(true);
+      expect(blockedStores.every((store) => store.values().length === 0)).toBe(true);
+      expect(initialStores.every((store) => store.values().length === 0)).toBe(true);
+      expect(logs.filter((message) => /restart required/iu.test(message))).toHaveLength(1);
+      for (const event of ['add', 'change', 'unlink', 'addDir', 'unlinkDir'] as const) {
+        expect(syntheticWatcher.listenerCount(event)).toBe(1);
+      }
+      expect(syntheticWatcher.watchedPaths).toHaveLength(4);
+
+      const newProcessWatcher = createMultiListenerWatcher();
+      const newProcessStores = Array.from({ length: 6 }, () => createMemoryStore());
+      await Promise.all(createSixReaderLoaders(factories).map((loader, index) => loader.load(
+        createLoaderContext(tree.root, newProcessStores[index], newProcessWatcher.watcher),
+      )));
+      expect(newProcessStores.every((store) => store.values().length === 1)).toBe(true);
+    } finally {
+      await rm(tree.rootPath, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     ['add', 'src/content/book-release/notes/note-002.json'],
     ['change', 'public/images/book-release/changed.webp'],

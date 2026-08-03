@@ -766,10 +766,13 @@ function removeReaderInvalidationListeners(
   for (const event of readerInvalidationEvents) watcher.off(event, coordinator.invalidateRelease);
 }
 
-function createReaderInvalidationCoordinator(watchedPaths: string[]): ReaderInvalidationCoordinator {
+function createReaderInvalidationCoordinator(
+  watchedPaths: string[],
+  previous?: Pick<ReaderInvalidationCoordinator, 'invalidated' | 'warned'>,
+): ReaderInvalidationCoordinator {
   const coordinator: ReaderInvalidationCoordinator = {
-    invalidated: false,
-    warned: false,
+    invalidated: previous?.invalidated ?? false,
+    warned: previous?.warned ?? false,
     targets: new Set(),
     invalidateRelease: () => undefined,
   };
@@ -804,7 +807,9 @@ function registerReaderInvalidation(context: LoaderContext): ReaderInvalidationR
   }
 
   let coordinator = watcherCoordinators.get(coordinatorKey);
+  let previousState: Pick<ReaderInvalidationCoordinator, 'invalidated' | 'warned'> | undefined;
   if (coordinator && !hasActiveReaderInvalidationListeners(watcher, coordinator)) {
+    previousState = { invalidated: coordinator.invalidated, warned: coordinator.warned };
     removeReaderInvalidationListeners(watcher, coordinator);
     watcherCoordinators.delete(coordinatorKey);
     coordinator = undefined;
@@ -816,7 +821,7 @@ function registerReaderInvalidation(context: LoaderContext): ReaderInvalidationR
     dirtyDuringLoad: false,
   };
   if (!coordinator) {
-    const newCoordinator = createReaderInvalidationCoordinator(watchedPaths);
+    const newCoordinator = createReaderInvalidationCoordinator(watchedPaths, previousState);
     newCoordinator.targets.add(target);
     coordinator = newCoordinator;
     watcherCoordinators.set(coordinatorKey, newCoordinator);
