@@ -101,17 +101,11 @@ const markdownDirectiveOptions = {
   extensions: [directive()],
   mdastExtensions: [directiveFromMarkdown()],
 };
-const privateRepositoryPattern = new RegExp(
-  `(?:^|[^a-z0-9_%-])agent-axiom/${'yu' + '-book'}(?:\\.git)?(?=$|[^a-z0-9._%-])`,
-  'iu',
-);
-const releaseRepositoryPathPattern = new RegExp(
-  `(?:^|/)agent-axiom/${'yu' + '-book'}(?:\\.git)?(?=$|[./])`,
-  'iu',
-);
+const privateRepositoryOrganization = 'agent' + '-axiom';
+const privateRepositoryName = 'yu' + '-book';
 const externalHttpsTokenPattern = /https:\/\/[^\s<>{}\[\]"'`()]+/giu;
 const percentRunPattern = /(?:%[0-9a-f]{2})+/giu;
-const securityEntityNames = 'sol|bsol|frasl|num|percnt|colon|period|hyphen|minus|lowbar|commat';
+const securityEntityNames = 'sol|bsol|frasl|num|percnt|colon|period|hyphen|minus|lowbar|commat|tab|newline';
 const numericSecurityEntity = '#(?:' + 'x[0-9a-f]+' + '|[0-9]+)';
 const securityEntityPattern = new RegExp(`&(?:${numericSecurityEntity}|${securityEntityNames});`, 'giu');
 const residualSecurityEncodingPattern = new RegExp(
@@ -130,6 +124,8 @@ const namedSecurityEntities: Readonly<Record<string, string>> = {
   percnt: '%',
   lowbar: '_',
   commat: '@',
+  tab: '\t',
+  newline: '\n',
 };
 
 /** Reader text may contain structural TAB/LF/CR, but no other Cc or any Cf. */
@@ -227,6 +223,31 @@ function canonicalizeRepositoryScanValue(value: string, normalizeBackslashes = t
   return resolved.join('/');
 }
 
+function hasPrivateRepositoryCoordinate(value: string): boolean {
+  const lowerValue = value.toLowerCase();
+  let searchOffset = 0;
+  while (searchOffset < value.length) {
+    const start = lowerValue.indexOf(privateRepositoryOrganization, searchOffset);
+    if (start < 0) return false;
+    const previous = value[start - 1];
+    if (previous && /[a-z0-9._-]/iu.test(previous)) {
+      searchOffset = start + 1;
+      continue;
+    }
+    let end = start + privateRepositoryOrganization.length;
+    while (end < value.length && /[a-z0-9._/\\-]/iu.test(value[end]!)) end += 1;
+    const normalized = canonicalizeRepositoryScanValue(value.slice(start, end)).toLowerCase();
+    const coordinate = `${privateRepositoryOrganization}/${privateRepositoryName}`;
+    const suffix = normalized.slice(coordinate.length);
+    if (normalized.startsWith(coordinate)
+      && (suffix === '' || suffix.startsWith('/') || suffix.startsWith('.'))) {
+      return true;
+    }
+    searchOffset = start + 1;
+  }
+  return false;
+}
+
 function externalUrlQueryAndFragmentScan(value: string): string {
   return value.replace(externalHttpsTokenPattern, (token) => {
     try {
@@ -252,31 +273,20 @@ function hasPrivatePath(value: string, normalizeBackslashes = true): boolean {
 function hasPrivateBackslashPath(value: string): boolean {
   const separator = '\\\\';
   const privateRoots = ['rig' + 'hts', 'manu' + 'script', 'resea' + 'rch', 'edito' + 'rial'].join('|');
-  const repository = `agent-axiom${separator}+${'yu' + '-book'}`;
   const patterns = [
     new RegExp(`(?:^|[^a-z0-9._-])(?:${privateRoots})${separator}+`, 'iu'),
     new RegExp(`(?:^|[^a-z0-9._-])[a-z]:${separator}+`, 'iu'),
     new RegExp(`(?:^|[^a-z0-9._-])${separator}+(?:Users|home|private)${separator}+`, 'iu'),
     new RegExp(`(?:^|[^a-z0-9._-])${separator}{2}[^${separator}\\s]+${separator}+`, 'iu'),
-    new RegExp(`(?:^|[^a-z0-9._-])${repository}(?:\\.git)?(?=$|[^a-z0-9._-])`, 'iu'),
   ];
   return patterns.some((pattern) => pattern.test(value));
-}
-
-function hasPrivateRepositoryWithMixedSeparators(value: string): boolean {
-  const separator = '(?:/|\\\\)+';
-  const repository = `agent-axiom${separator}${'yu' + '-book'}`;
-  return new RegExp(
-    `(?:^|[^a-z0-9._-])${repository}(?:\\.git)?(?=$|[^a-z0-9._-])`,
-    'iu',
-  ).test(value);
 }
 
 function privateSentinel(value: string): string | null {
   assertNoForbiddenUnicodeControls(value, 'reader text');
   const canonical = canonicalSecurityValue(value);
   assertNoForbiddenUnicodeControls(canonical, 'decoded reader text');
-  if (privateRepositoryPattern.test(canonicalizeRepositoryScanValue(canonical))) {
+  if (hasPrivateRepositoryCoordinate(canonical)) {
     return 'private repository coordinate';
   }
   if (privateIdPattern.test(canonical)) return 'private-prefixed identifier';
@@ -284,18 +294,21 @@ function privateSentinel(value: string): string | null {
   return null;
 }
 
-function runtimeSourceSentinel(value: string, directiveScanValue = value): string | null {
+function runtimeSourceSentinel(
+  value: string,
+  directiveScanValue = value,
+  scanDangerousExactText = true,
+): string | null {
   if (forbiddenUnicodeTextControlPattern.test(value)) return 'Unicode control';
   const canonical = canonicalSecurityValue(value);
   if (forbiddenUnicodeTextControlPattern.test(canonical)) return 'decoded Unicode control';
-  if (privateRepositoryPattern.test(canonicalizeRepositoryScanValue(canonical, false))
-    || hasPrivateRepositoryWithMixedSeparators(canonical)) {
+  if (hasPrivateRepositoryCoordinate(canonical)) {
     return 'private repository coordinate';
   }
   if (privateIdPattern.test(canonical)) return 'private-prefixed identifier';
   if (hasPrivatePath(canonical, false) || hasPrivateBackslashPath(canonical)) return 'private repository path';
   if (exactArtifactDirectivePattern.test(canonicalSecurityValue(directiveScanValue))) return 'raw directive';
-  if (dangerousArtifactSchemePattern.test(canonical)) return 'dangerous URL scheme';
+  if (scanDangerousExactText && hasDangerousSchemeInCanonicalText(canonical)) return 'dangerous URL scheme';
   return null;
 }
 
@@ -737,7 +750,39 @@ const runtimeScanRoots = [
   'src/styles/book.css',
 ] as const;
 const builtReaderRoot = 'dist/book';
-const builtTextExtensions = /\.(?:cjs|css|csv|html?|js|json|map|md|mjs|svg|txt|webmanifest|xml)$/iu;
+const scriptLikeArtifactExtensionNames = [
+  'cjs',
+  'cts',
+  'js',
+  'jsx',
+  'json',
+  'map',
+  'mjs',
+  'mts',
+  'ts',
+  'tsx',
+  'webmanifest',
+] as const;
+const scriptLikeArtifactExtensions = new RegExp(
+  `\\.(?:${scriptLikeArtifactExtensionNames.join('|')})$`,
+  'iu',
+);
+const builtTextExtensionNames = [
+  ...scriptLikeArtifactExtensionNames,
+  'css',
+  'csv',
+  'htm',
+  'html',
+  'md',
+  'svg',
+  'txt',
+  'xml',
+] as const;
+const builtTextExtensions = new RegExp(`\\.(?:${builtTextExtensionNames.join('|')})$`, 'iu');
+const runtimeTextExtensions = new RegExp(
+  `\\.(?:${[...builtTextExtensionNames, 'astro'].join('|')})$`,
+  'iu',
+);
 const builtHtmlExtensions = /\.(?:html?|svg|xml)$/iu;
 const builtPlainProseExtensions = /\.(?:csv|md|txt)$/iu;
 const builtUrlAttributeNames = new Set(['action', 'cite', 'formaction', 'href', 'poster', 'src']);
@@ -811,9 +856,17 @@ const builtBlockElements = new Set([
   'ul',
 ]);
 const exactArtifactDirectivePattern = /(?::{2,3}[a-z][a-z0-9-]*(?:\[[^\]\r\n]*\])?(?:\{[^{}\r\n]*\})?|:[a-z][a-z0-9-]*\[[^\]\r\n]*\](?:\{[^{}\r\n]*\})?)/iu;
-const dangerousArtifactSchemePattern = /(?:^|[^a-z0-9+.-])(?:data|file|javascript|vbscript):(?=\S)/iu;
-const dangerousIsolatedSchemePattern = /(?:^|[^a-z0-9+.-])(?:data|file|javascript|vbscript):[\u0009-\u000d\u0020]*/iu;
-const scriptLikeArtifactExtensions = /\.(?:cjs|cts|js|jsx|json|map|mjs|mts|ts|tsx|webmanifest)$/iu;
+const dangerousSchemeNames = [
+  'da' + 'ta',
+  'fi' + 'le',
+  'java' + 'script',
+  'vb' + 'script',
+];
+const asciiC0PatternSource = `[${String.fromCodePoint(0)}-${String.fromCodePoint(0x20)}]*`;
+const dangerousSchemePattern = new RegExp(
+  `(?:^|[^a-z0-9+.-])(?:${dangerousSchemeNames.join('|')}):${asciiC0PatternSource}`,
+  'iu',
+);
 const strictUtf8 = new TextDecoder('utf-8', { fatal: true });
 const maxSrcdocDepth = 8;
 const maxCssSourceLength = 1_000_000;
@@ -848,7 +901,7 @@ type CssNode = {
   children?: Iterable<CssNode> | null;
 };
 type CssParse = (source: string, options?: {
-  context?: 'stylesheet' | 'declarationList';
+  context?: 'stylesheet' | 'declarationList' | 'value';
   positions?: boolean;
   onParseError?: (error: unknown) => void;
 }) => CssNode;
@@ -868,39 +921,88 @@ const decodeCssIdentifier = (cssTreeRequire('css-tree/utils') as {
   ident: { decode: (value: string) => string };
 }).ident.decode;
 
-function hasDangerousSchemeInIsolatedValue(value: string): boolean {
-  if (dangerousIsolatedSchemePattern.test(value)) return true;
-  try {
-    return dangerousIsolatedSchemePattern.test(canonicalSecurityValue(value));
-  } catch {
-    // Cooked source literals may contain escaped controls that are harmless
-    // unless the literal already exposes a dangerous scheme before them.
-    return false;
-  }
+function hasDangerousSchemeInCanonicalText(value: string): boolean {
+  return dangerousSchemePattern.test(value.replace(/[\u0009\u000a\u000d]/gu, ''));
 }
 
-function scriptSourceHasDangerousScheme(source: string, label: string): boolean {
+type DecodedFragmentPolicy = Readonly<{
+  privateIds: boolean;
+  privatePaths: boolean;
+  directives: boolean;
+  schemes: boolean;
+}>;
+
+const decodedArtifactPolicy: DecodedFragmentPolicy = {
+  privateIds: false,
+  privatePaths: true,
+  directives: true,
+  schemes: true,
+};
+const decodedRuntimePolicy: DecodedFragmentPolicy = {
+  ...decodedArtifactPolicy,
+  privateIds: true,
+};
+
+function decodedFragmentSentinel(
+  value: string,
+  policy: DecodedFragmentPolicy = decodedArtifactPolicy,
+): string | null {
+  assertNoForbiddenUnicodeControls(value, 'decoded syntax fragment');
+  const canonical = canonicalSecurityValue(value);
+  assertNoForbiddenUnicodeControls(canonical, 'canonical decoded syntax fragment');
+  if (hasPrivateRepositoryCoordinate(canonical)) return 'private repository coordinate';
+  if (policy.privateIds && privateIdPattern.test(canonical)) return 'private-prefixed identifier';
+  if (policy.privatePaths
+    && (hasPrivatePath(canonical, false) || hasPrivateBackslashPath(canonical))) {
+    return 'private repository path';
+  }
+  if (policy.directives && exactArtifactDirectivePattern.test(canonical)) return 'raw directive';
+  if (policy.schemes && hasDangerousSchemeInCanonicalText(canonical)) return 'dangerous URL scheme';
+  return null;
+}
+
+function scriptKindForLabel(label: string): import('typescript').ScriptKind {
+  if (/\.(?:json|map|webmanifest)$/iu.test(label)) return tsCompiler.ScriptKind.JSON;
+  if (/\.tsx$/iu.test(label)) return tsCompiler.ScriptKind.TSX;
+  if (/\.jsx$/iu.test(label)) return tsCompiler.ScriptKind.JSX;
+  if (/\.(?:ts|mts|cts)$/iu.test(label)) return tsCompiler.ScriptKind.TS;
+  return tsCompiler.ScriptKind.JS;
+}
+
+function scriptSourceSentinel(
+  source: string,
+  label: string,
+  policy: DecodedFragmentPolicy = decodedArtifactPolicy,
+): string | null {
   const sourceFile = tsCompiler.createSourceFile(
     label,
     source,
     tsCompiler.ScriptTarget.Latest,
     true,
-    tsCompiler.ScriptKind.TSX,
+    scriptKindForLabel(label),
   );
-  let found = false;
+  const parseDiagnostics = (sourceFile as typeof sourceFile & {
+    parseDiagnostics?: readonly import('typescript').Diagnostic[];
+  }).parseDiagnostics;
+  if (parseDiagnostics && parseDiagnostics.length > 0) {
+    throw new Error(`${label} contains invalid TypeScript or JavaScript syntax`);
+  }
+  let found: string | null = null;
   const seenComments = new Set<number>();
   const scanCommentRanges = (ranges: readonly import('typescript').CommentRange[] | undefined) => {
     for (const range of ranges ?? []) {
       if (seenComments.has(range.pos)) continue;
       seenComments.add(range.pos);
-      if (hasDangerousSchemeInIsolatedValue(source.slice(range.pos, range.end))) found = true;
+      found = decodedFragmentSentinel(source.slice(range.pos, range.end), policy) ?? found;
     }
   };
   const visit = (node: import('typescript').Node): void => {
     scanCommentRanges(tsCompiler.getLeadingCommentRanges(source, node.getFullStart()));
     scanCommentRanges(tsCompiler.getTrailingCommentRanges(source, node.end));
-    if (tsCompiler.isStringLiteralLike(node) && hasDangerousSchemeInIsolatedValue(node.text)) {
-      found = true;
+    if (tsCompiler.isStringLiteralLike(node)
+      || tsCompiler.isTemplateLiteralToken(node)
+      || tsCompiler.isJsxText(node)) {
+      found = decodedFragmentSentinel(node.text, policy) ?? found;
     }
     if (!found) tsCompiler.forEachChild(node, visit);
   };
@@ -909,17 +1011,20 @@ function scriptSourceHasDangerousScheme(source: string, label: string): boolean 
   return found;
 }
 
-function astroSourceHasDangerousScheme(source: string, label: string): boolean {
+function astroSourceSentinel(source: string, label: string): string | null {
   const parsed = parseAstro(source, { position: true });
   if (parsed.diagnostics.some((diagnostic) => diagnostic.severity === 1)) {
     throw new Error(`${label} contains invalid Astro syntax`);
   }
-  let found = false;
+  let found: string | null = null;
   const scanScript = (value: string, suffix: string) => {
-    if (!found && scriptSourceHasDangerousScheme(value, `${label}${suffix}.tsx`)) found = true;
+    if (!found) found = scriptSourceSentinel(value, `${label}${suffix}.tsx`, decodedRuntimePolicy);
   };
   const visit = (node: AstroNode): void => {
     if (found) return;
+    if (node.type === 'text' || node.type === 'comment') {
+      found = decodedFragmentSentinel(node.value, decodedRuntimePolicy) ?? found;
+    }
     if (node.type === 'frontmatter') scanScript(node.value, '.frontmatter');
     if (node.type === 'expression') {
       scanScript(
@@ -929,17 +1034,25 @@ function astroSourceHasDangerousScheme(source: string, label: string): boolean {
     }
     if ((node.type === 'element' || node.type === 'component' || node.type === 'custom-element')) {
       for (const attribute of node.attributes) {
+        if (attribute.kind === 'spread') {
+          throw new Error(`${label} contains a dynamic Astro spread attribute`);
+        }
         if (attribute.kind === 'quoted' || attribute.kind === 'empty') {
-          if (hasDangerousSchemeInIsolatedValue(attribute.value)) found = true;
+          found = decodedFragmentSentinel(attribute.value, decodedRuntimePolicy) ?? found;
         } else {
           scanScript(attribute.value, `.attribute-${attribute.name}`);
         }
       }
-      if (node.type === 'element' && node.name.toLowerCase() === 'script') {
-        scanScript(
-          node.children.map((child) => child.type === 'text' ? child.value : '').join(''),
-          '.script',
-        );
+      if (node.type === 'element') {
+        const elementName = node.name.toLowerCase();
+        if (elementName === 'script') {
+          scanScript(
+            node.children.map((child) => child.type === 'text' ? child.value : '').join(''),
+            '.script',
+          );
+          return;
+        }
+        if (elementName === 'style') return;
       }
     }
     if ('children' in node) {
@@ -953,6 +1066,7 @@ function astroSourceHasDangerousScheme(source: string, label: string): boolean {
 type HtmlNode = DefaultTreeAdapterMap['node'];
 type HtmlParentNode = DefaultTreeAdapterMap['parentNode'];
 type HtmlElement = DefaultTreeAdapterMap['element'];
+type HtmlTemplate = DefaultTreeAdapterMap['template'];
 type HtmlTextNode = DefaultTreeAdapterMap['textNode'];
 type HtmlSourceLocation = { startOffset: number; endOffset: number };
 type HtmlElementSourceLocation = HtmlSourceLocation & {
@@ -972,6 +1086,15 @@ function isHtmlTextNode(node: HtmlNode): node is HtmlTextNode {
 
 function isHtmlParentNode(node: HtmlNode): node is HtmlParentNode {
   return 'childNodes' in node;
+}
+
+function isHtmlTemplate(node: HtmlNode): node is HtmlTemplate {
+  return isHtmlElement(node) && node.tagName.toLowerCase() === 'template' && 'content' in node;
+}
+
+function htmlChildNodes(node: HtmlNode): readonly HtmlNode[] {
+  if (isHtmlTemplate(node)) return node.content.childNodes;
+  return isHtmlParentNode(node) ? node.childNodes : [];
 }
 
 function assertCssLexicalBounds(source: string, label: string): void {
@@ -1021,7 +1144,7 @@ function assertCssLexicalBounds(source: string, label: string): void {
 function parseCssSecurityAst(
   source: string,
   label: string,
-  context: 'stylesheet' | 'declarationList' = 'stylesheet',
+  context: 'stylesheet' | 'declarationList' | 'value' = 'stylesheet',
 ): CssNode {
   try {
     assertCssLexicalBounds(source, label);
@@ -1113,9 +1236,7 @@ function htmlStaticStyleBlocks(source: string): StaticStyleBlock[] {
       blocks.push({ source: source.slice(startOffset, endOffset), startOffset });
       return;
     }
-    if (isHtmlParentNode(node)) {
-      for (const child of node.childNodes) visit(child);
-    }
+    for (const child of htmlChildNodes(node)) visit(child);
   };
   visit(parse(source, { scriptingEnabled: false, sourceCodeLocationInfo: true }));
   return blocks;
@@ -1133,9 +1254,34 @@ function htmlSrcdocAttributeRanges(source: string): OffsetRange[] {
         ranges.push({ start: location.startOffset, end: location.endOffset });
       }
     }
-    if (isHtmlParentNode(node)) {
-      for (const child of node.childNodes) visit(child);
+    for (const child of htmlChildNodes(node)) visit(child);
+  };
+  visit(parse(source, { scriptingEnabled: false, sourceCodeLocationInfo: true }));
+  return ranges;
+}
+
+function htmlExecutableCodeRanges(source: string): OffsetRange[] {
+  const ranges: OffsetRange[] = [];
+  const visit = (node: HtmlNode): void => {
+    if (isHtmlElement(node)) {
+      const location = (node as HtmlNode & { sourceCodeLocation?: HtmlElementSourceLocation })
+        .sourceCodeLocation;
+      if (node.tagName.toLowerCase() === 'script') {
+        const start = location?.startTag?.endOffset;
+        const end = location?.endTag?.startOffset;
+        if (typeof start !== 'number' || typeof end !== 'number' || end < start) {
+          throw new Error('HTML script block has incomplete source locations');
+        }
+        ranges.push({ start, end });
+      }
+      for (const attribute of node.attrs) {
+        if (!/^on[a-z]/iu.test(attribute.name)) continue;
+        const attributeLocation = location?.attrs?.[attribute.name];
+        if (!attributeLocation) throw new Error('HTML event handler has no source location');
+        ranges.push({ start: attributeLocation.startOffset, end: attributeLocation.endOffset });
+      }
     }
+    for (const child of htmlChildNodes(node)) visit(child);
   };
   visit(parse(source, { scriptingEnabled: false, sourceCodeLocationInfo: true }));
   return ranges;
@@ -1163,6 +1309,9 @@ function astroStaticStyleBlocks(source: string, label: string): StaticStyleBlock
   const blocks: StaticStyleBlock[] = [];
   const visit = (node: AstroNode): void => {
     if (node.type === 'element' && node.name.toLowerCase() === 'style') {
+      if (node.attributes.some((attribute) => attribute.name.toLowerCase() === 'define:vars')) {
+        throw new Error(`${label} contains a dynamic Astro style define:vars boundary`);
+      }
       const lang = node.attributes.find((attribute) => attribute.name.toLowerCase() === 'lang');
       if (lang && lang.value.toLowerCase() !== 'css') {
         throw new Error(`${label} contains a non-CSS Astro style block`);
@@ -1208,6 +1357,9 @@ function astroStaticInlineStyles(source: string, label: string): string[] {
     if (node.type === 'element' || node.type === 'component' || node.type === 'custom-element') {
       const style = node.attributes.find((attribute) => attribute.name.toLowerCase() === 'style');
       if (style?.kind === 'quoted') styles.push(style.value);
+      else if (style && style.kind !== 'empty') {
+        throw new Error(`${label} contains a dynamic Astro style attribute`);
+      }
     }
     if ('children' in node) {
       for (const child of node.children) visit(child);
@@ -1254,63 +1406,92 @@ function scanCssGeneratedProse(
   stylesheet: string,
   label: string,
   context: 'stylesheet' | 'declarationList' = 'stylesheet',
+  decodedPolicy: DecodedFragmentPolicy = decodedArtifactPolicy,
 ): void {
   const ast = parseCssSecurityAst(stylesheet, label, context);
-  walkCss(ast, (node) => {
-    if (node.type === 'Url') {
-      if (typeof node.value !== 'string') throw new Error(`${label} contains an unresolved CSS URL`);
-      assertBuiltReaderUrlSafe(node.value, `${label} CSS URL`);
-      return;
-    }
-    if (node.type !== 'Declaration'
-      || typeof node.property !== 'string'
-      || decodeCssIdentifier(node.property).toLowerCase() !== 'content'
-      || typeof node.value !== 'object') return;
-    const scanChildren = (parent: CssNode): void => {
-      let currentRun = '';
-      const flush = () => {
-        if (!currentRun) return;
-        const sentinel = privateSentinel(currentRun);
-        if (sentinel) throw new Error(`${label} contains forbidden CSS-generated prose (${sentinel})`);
-        currentRun = '';
-      };
-      for (const child of parent.children ? [...parent.children] : []) {
-        if (child.type === 'String' && typeof child.value === 'string') {
-          currentRun += child.value;
-          continue;
+  const scanAst = (root: CssNode, rawDepth: number): void => {
+    walkCss(root, (node) => {
+      const decodedNames = [node.name, node.property]
+        .filter((value): value is string => typeof value === 'string')
+        .map((value) => decodeCssIdentifier(value));
+      for (const value of decodedNames) {
+        const sentinel = decodedFragmentSentinel(value, decodedPolicy);
+        if (sentinel) throw new Error(`${label} contains forbidden decoded CSS syntax (${sentinel})`);
+      }
+      if (node.type === 'String') {
+        if (typeof node.value !== 'string') throw new Error(`${label} contains unresolved CSS text`);
+        const sentinel = decodedFragmentSentinel(node.value, decodedPolicy);
+        if (sentinel) throw new Error(`${label} contains forbidden decoded CSS text (${sentinel})`);
+        return;
+      }
+      if (node.type === 'Url') {
+        if (typeof node.value !== 'string') throw new Error(`${label} contains an unresolved CSS URL`);
+        assertBuiltReaderUrlSafe(node.value, `${label} CSS URL`);
+        return;
+      }
+      if (node.type === 'Raw') {
+        if (typeof node.value !== 'string' || rawDepth >= 8) {
+          throw new Error(`${label} contains unresolved raw CSS`);
         }
-        if (child.type === 'Identifier'
-          && typeof child.name === 'string'
-          && zeroWidthCssContentIdentifiers.has(decodeCssIdentifier(child.name).toLowerCase())) {
-          continue;
+        scanAst(parseCssSecurityAst(node.value, `${label} raw value`, 'value'), rawDepth + 1);
+        return;
+      }
+      if (node.type !== 'Declaration'
+        || typeof node.property !== 'string'
+        || decodeCssIdentifier(node.property).toLowerCase() !== 'content'
+        || typeof node.value !== 'object') return;
+      const scanChildren = (parent: CssNode): void => {
+        let currentRun = '';
+        const flush = () => {
+          if (!currentRun) return;
+          const sentinel = decodedFragmentSentinel(currentRun, decodedRuntimePolicy);
+          if (sentinel) throw new Error(`${label} contains forbidden CSS-generated prose (${sentinel})`);
+          currentRun = '';
+        };
+        for (const child of parent.children ? [...parent.children] : []) {
+          if (child.type === 'String' && typeof child.value === 'string') {
+            currentRun += child.value;
+            continue;
+          }
+          if (child.type === 'Identifier'
+            && typeof child.name === 'string'
+            && zeroWidthCssContentIdentifiers.has(decodeCssIdentifier(child.name).toLowerCase())) {
+            continue;
+          }
+          flush();
+          if (child.type === 'Raw') throw new Error(`${label} contains unresolved dynamic CSS content`);
+          if (child.type === 'Function') {
+            const name = child.name ? decodeCssIdentifier(child.name).toLowerCase() : null;
+            if (!name || !allowedStaticCssContentFunctions.has(name)) {
+              throw new Error(`${label} contains unresolved dynamic CSS content function`);
+            }
+          }
+          scanChildren(child);
         }
         flush();
-        if (child.type === 'Raw') throw new Error(`${label} contains unresolved dynamic CSS content`);
-        if (child.type === 'Function') {
-          const name = child.name?.toLowerCase();
-          if (!name || !allowedStaticCssContentFunctions.has(name)) {
-            throw new Error(`${label} contains unresolved dynamic CSS content function`);
-          }
-        }
-        scanChildren(child);
-      }
-      flush();
-    };
-    scanChildren(node.value);
-  });
+      };
+      scanChildren(node.value);
+    });
+  };
+  scanAst(ast, 0);
 }
 
-function scanEmbeddedCssGeneratedProse(source: string, context: ArtifactSyntaxContext, label: string): void {
+function scanEmbeddedCssGeneratedProse(
+  source: string,
+  context: ArtifactSyntaxContext,
+  label: string,
+  decodedPolicy: DecodedFragmentPolicy = decodedArtifactPolicy,
+): void {
   if (context === 'css') {
-    scanCssGeneratedProse(source, label);
+    scanCssGeneratedProse(source, label, 'stylesheet', decodedPolicy);
     return;
   }
   for (const block of staticStyleBlocks(source, context, label)) {
-    scanCssGeneratedProse(block.source, `${label} style block`);
+    scanCssGeneratedProse(block.source, `${label} style block`, 'stylesheet', decodedPolicy);
   }
   if (context === 'astro') {
     for (const style of astroStaticInlineStyles(source, label)) {
-      scanCssGeneratedProse(style, `${label} inline style`, 'declarationList');
+      scanCssGeneratedProse(style, `${label} inline style`, 'declarationList', decodedPolicy);
     }
   }
 }
@@ -1319,13 +1500,12 @@ function releasePathSentinel(relativePath: string): string | null {
   const canonical = canonicalSecurityValue(relativePath);
   if (canonical.includes('\\')) return 'ambiguous reverse solidus';
   const repositoryPath = canonicalizeRepositoryScanValue(canonical);
-  if (privateRepositoryPattern.test(repositoryPath)
-    || releaseRepositoryPathPattern.test(repositoryPath)) {
+  if (hasPrivateRepositoryCoordinate(repositoryPath)) {
     return 'private repository coordinate';
   }
   if (hasPrivatePath(canonical)) return 'private repository path';
   if (exactArtifactDirectivePattern.test(canonical)) return 'raw directive';
-  if (dangerousArtifactSchemePattern.test(canonical)) return 'dangerous URL scheme';
+  if (hasDangerousSchemeInCanonicalText(canonical)) return 'dangerous URL scheme';
   return null;
 }
 
@@ -1366,18 +1546,32 @@ async function scanRuntimePath(projectRoot: string, path: string): Promise<void>
     return;
   }
   if (!metadata.isFile()) throw new Error(`release-layer scan requires regular files: ${relativePath}`);
-  const contents = (await readFile(path)).toString('utf8');
+  const bytes = await readFile(path);
+  let contents: string;
+  try {
+    contents = runtimeTextExtensions.test(relativePath) ? strictUtf8.decode(bytes) : bytes.toString('utf8');
+  } catch (error) {
+    throw new Error(`${relativePath} is not valid UTF-8 runtime source`, { cause: error });
+  }
   const context = artifactContext(relativePath, true);
+  const contextScansDangerousSchemes = context === 'astro'
+    || (context === 'generic' && scriptLikeArtifactExtensions.test(relativePath));
   let sentinel: string | null;
   try {
-    sentinel = runtimeSourceSentinel(contents, directiveScanSource(contents, context, relativePath));
-    if (!sentinel && ((context === 'astro' && astroSourceHasDangerousScheme(contents, relativePath))
-      || (context === 'generic'
-        && scriptLikeArtifactExtensions.test(relativePath)
-        && scriptSourceHasDangerousScheme(contents, relativePath)))) {
-      sentinel = 'dangerous URL scheme';
+    sentinel = runtimeSourceSentinel(
+      contents,
+      directiveScanSource(contents, context, relativePath),
+      !contextScansDangerousSchemes,
+    );
+    if (!sentinel && context === 'astro') {
+      sentinel = astroSourceSentinel(contents, relativePath);
     }
-    scanEmbeddedCssGeneratedProse(contents, context, relativePath);
+    if (!sentinel
+      && context === 'generic'
+      && scriptLikeArtifactExtensions.test(relativePath)) {
+      sentinel = scriptSourceSentinel(contents, relativePath, decodedRuntimePolicy);
+    }
+    scanEmbeddedCssGeneratedProse(contents, context, relativePath, decodedRuntimePolicy);
   } catch (error) {
     throw new Error(`${relativePath} contains invalid canonical security text`, { cause: error });
   }
@@ -1385,6 +1579,10 @@ async function scanRuntimePath(projectRoot: string, path: string): Promise<void>
 }
 
 function assertBuiltReaderUrlSafe(value: string, relativePath: string): void {
+  const fragmentSentinel = decodedFragmentSentinel(value);
+  if (fragmentSentinel) {
+    throw new Error(`${relativePath} contains a forbidden decoded URL sentinel (${fragmentSentinel})`);
+  }
   assertNoForbiddenUnicodeControls(value, `${relativePath} reader-facing URL`);
   const canonical = canonicalSecurityValue(value);
   assertNoForbiddenUnicodeControls(canonical, `${relativePath} decoded reader-facing URL`);
@@ -1428,6 +1626,8 @@ function exactArtifactSentinel(
   value: string,
   strictCanonical: boolean,
   directiveValue = value,
+  scanDangerousExactText = true,
+  dangerousValue = value,
 ): string | null {
   const forbiddenControlPattern = strictCanonical
     ? forbiddenUnicodeTextControlPattern
@@ -1440,7 +1640,7 @@ function exactArtifactSentinel(
   if (artifactCanonical.excessive) return 'excessive nested canonical encoding';
   if (forbiddenControlPattern.test(canonical)) return 'decoded Unicode control';
   const structuralScanValue = canonical.replace(/<!--|-->|\/\*|\*\//gu, ' ');
-  if (privateRepositoryPattern.test(canonicalizeRepositoryScanValue(structuralScanValue))) {
+  if (hasPrivateRepositoryCoordinate(structuralScanValue)) {
     return 'private repository coordinate';
   }
   if (hasPrivatePath(structuralScanValue)) return 'private repository path';
@@ -1450,7 +1650,13 @@ function exactArtifactSentinel(
   if (exactArtifactDirectivePattern.test(canonicalDirectiveValue)) {
     return 'raw directive';
   }
-  if (dangerousArtifactSchemePattern.test(structuralScanValue)) return 'dangerous URL scheme';
+  if (scanDangerousExactText) {
+    const canonicalDangerousValue = strictCanonical
+      ? canonicalSecurityValue(dangerousValue)
+      : tolerantArtifactCanonicalValue(dangerousValue).value;
+    const structuralDangerousValue = canonicalDangerousValue.replace(/<!--|-->|\/\*|\*\//gu, ' ');
+    if (hasDangerousSchemeInCanonicalText(structuralDangerousValue)) return 'dangerous URL scheme';
+  }
   return null;
 }
 
@@ -1461,18 +1667,22 @@ function scanBuiltTextArtifact(
   context: ArtifactSyntaxContext,
 ): void {
   let sentinel: string | null;
+  const scriptLike = context === 'generic' && scriptLikeArtifactExtensions.test(relativePath);
   try {
+    const dangerousValue = context === 'html'
+      ? maskSourceRanges(contents, htmlExecutableCodeRanges(contents))
+      : contents;
     sentinel = exactArtifactSentinel(
       contents,
       strictCanonical,
       directiveScanSource(contents, context, relativePath),
+      !scriptLike,
+      dangerousValue,
     );
     if (!sentinel
       && strictCanonical
-      && context === 'generic'
-      && scriptLikeArtifactExtensions.test(relativePath)
-      && scriptSourceHasDangerousScheme(contents, relativePath)) {
-      sentinel = 'dangerous URL scheme';
+      && scriptLike) {
+      sentinel = scriptSourceSentinel(contents, relativePath);
     }
   } catch (error) {
     throw new Error(`${relativePath} contains invalid canonical security text`, { cause: error });
@@ -1480,37 +1690,112 @@ function scanBuiltTextArtifact(
   if (sentinel) throw new Error(`${relativePath} contains forbidden exact bytes (${sentinel})`);
 }
 
+type BuiltScriptSource = { source: string; type: string | null };
+type BuiltScriptPayloadKind = 'javascript' | 'json' | 'inert';
+
+const javascriptMimeTypes = new Set([
+  'application/ecmascript',
+  'application/javascript',
+  'application/x-ecmascript',
+  'application/x-javascript',
+  'text/ecmascript',
+  'text/javascript',
+  'text/javascript1.0',
+  'text/javascript1.1',
+  'text/javascript1.2',
+  'text/javascript1.3',
+  'text/javascript1.4',
+  'text/javascript1.5',
+  'text/jscript',
+  'text/livescript',
+  'text/x-ecmascript',
+  'text/x-javascript',
+]);
+
+function builtScriptPayloadKind(type: string | null): BuiltScriptPayloadKind {
+  const normalized = (type ?? '').trim().toLowerCase();
+  if (!normalized || normalized === 'module') return 'javascript';
+  if (normalized === 'importmap' || normalized === 'speculationrules') return 'json';
+  const mimeType = normalized.split(';', 1)[0]!.trim();
+  if (javascriptMimeTypes.has(mimeType)) return 'javascript';
+  if (mimeType === 'application/json' || mimeType.endsWith('+json')) return 'json';
+  return 'inert';
+}
+
+function jsonSourceSentinel(source: string, label: string): string | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(source);
+  } catch (error) {
+    throw new Error(`${label} contains invalid JSON`, { cause: error });
+  }
+  const pending: unknown[] = [value];
+  let visited = 0;
+  while (pending.length > 0) {
+    visited += 1;
+    if (visited > 100_000) throw new Error(`${label} exceeds the structured-data node bound`);
+    const current = pending.pop();
+    if (typeof current === 'string') {
+      const sentinel = decodedFragmentSentinel(current);
+      if (sentinel) return sentinel;
+    } else if (Array.isArray(current)) {
+      pending.push(...current);
+    } else if (current && typeof current === 'object') {
+      for (const [key, child] of Object.entries(current)) pending.push(key, child);
+    }
+  }
+  return null;
+}
+
+function builtScriptSourceSentinel(script: BuiltScriptSource, label: string): string | null {
+  const kind = builtScriptPayloadKind(script.type);
+  if (kind === 'javascript') return scriptSourceSentinel(script.source, `${label}.js`);
+  if (kind === 'json') return jsonSourceSentinel(script.source, `${label}.json`);
+  return decodedFragmentSentinel(script.source);
+}
+
 function parsedBuiltReaderDocument(contents: string): {
   visibleText: string;
+  securityText: string[];
   accessibleText: string[];
   urls: string[];
   srcdocs: string[];
   inlineStyles: string[];
-  scriptSources: string[];
+  scriptSources: BuiltScriptSource[];
 } {
   const text: string[] = [];
+  const securityText: string[] = [];
   const accessibleText: string[] = [];
   const urls: string[] = [];
   const srcdocs: string[] = [];
   const inlineStyles: string[] = [];
-  const scriptSources: string[] = [];
+  const scriptSources: BuiltScriptSource[] = [];
   const boundary = () => {
     if (text.length > 0 && !text.at(-1)?.endsWith('\n')) text.push('\n');
   };
   const collectUrlAttributes = (element: HtmlElement) => {
+    const tagName = element.tagName.toLowerCase();
     for (const attribute of element.attrs) {
-      if (builtUrlAttributeNames.has(attribute.name.toLowerCase())) urls.push(attribute.value);
+      const name = attribute.name.toLowerCase();
+      if (builtUrlAttributeNames.has(name) || (tagName === 'object' && name === 'data')) {
+        urls.push(attribute.value);
+      }
+      if (name === 'srcset') {
+        for (const candidate of attribute.value.split(',')) {
+          const url = candidate.trim().split(/[\u0009-\u000d\u0020]+/u)[0];
+          if (url) urls.push(url);
+        }
+      }
     }
   };
-  const visit = (node: HtmlNode): void => {
+  const visit = (node: HtmlNode, readerVisible = true): void => {
     if (isHtmlTextNode(node)) {
-      text.push(node.value);
+      securityText.push(node.value);
+      if (readerVisible) text.push(node.value);
       return;
     }
     if (!isHtmlElement(node)) {
-      if (isHtmlParentNode(node)) {
-        for (const child of node.childNodes) visit(child);
-      }
+      for (const child of htmlChildNodes(node)) visit(child, readerVisible);
       return;
     }
     collectUrlAttributes(node);
@@ -1518,27 +1803,53 @@ function parsedBuiltReaderDocument(contents: string): {
     const attributes = new Map(node.attrs.map((attribute) => [attribute.name.toLowerCase(), attribute.value]));
     if (tagName === 'iframe' && attributes.has('srcdoc')) srcdocs.push(attributes.get('srcdoc')!);
     if (attributes.has('style')) inlineStyles.push(attributes.get('style')!);
-    if (tagName === 'script') {
-      scriptSources.push(node.childNodes
-        .filter(isHtmlTextNode)
-        .map((child) => child.value)
-        .join(''));
-    }
-    if ((tagName === 'option' || tagName === 'optgroup' || tagName === 'track') && attributes.has('label')) {
-      accessibleText.push(attributes.get('label')!);
-    }
-    if (tagName === 'th' && attributes.has('abbr')) accessibleText.push(attributes.get('abbr')!);
-    if (builtHiddenTextElements.has(tagName)) return;
     for (const attribute of node.attrs) {
-      if (builtAccessibleTextAttributeNames.has(attribute.name.toLowerCase())) {
-        accessibleText.push(attribute.value);
+      if (/^on[a-z]/iu.test(attribute.name)) {
+        scriptSources.push({ source: attribute.value, type: null });
       }
     }
-    if (tagName === 'input' && attributes.get('type')?.toLowerCase() !== 'hidden') {
+    if (tagName === 'script') {
+      scriptSources.push({
+        source: htmlChildNodes(node)
+          .filter(isHtmlTextNode)
+          .map((child) => child.value)
+          .join(''),
+        type: attributes.get('type') ?? null,
+      });
+    }
+    if (tagName === 'meta'
+      && attributes.get('http-equiv')?.toLowerCase() === 'refresh'
+      && attributes.has('content')) {
+      const refreshUrl = attributes.get('content')?.match(/(?:^|;)\s*url\s*=\s*([\s\S]*)$/iu)?.[1]
+        ?.trim()
+        .replace(/^(?:"([\s\S]*)"|'([\s\S]*)')$/u, '$1$2');
+      if (refreshUrl) urls.push(refreshUrl);
+    }
+    if (readerVisible
+      && (tagName === 'option' || tagName === 'optgroup' || tagName === 'track')
+      && attributes.has('label')) {
+      accessibleText.push(attributes.get('label')!);
+    }
+    if (readerVisible && tagName === 'th' && attributes.has('abbr')) {
+      accessibleText.push(attributes.get('abbr')!);
+    }
+    if (isHtmlTemplate(node)) {
+      for (const child of htmlChildNodes(node)) visit(child, false);
+      return;
+    }
+    if (builtHiddenTextElements.has(tagName)) return;
+    if (readerVisible) {
+      for (const attribute of node.attrs) {
+        if (builtAccessibleTextAttributeNames.has(attribute.name.toLowerCase())) {
+          accessibleText.push(attribute.value);
+        }
+      }
+    }
+    if (readerVisible && tagName === 'input' && attributes.get('type')?.toLowerCase() !== 'hidden') {
       const value = attributes.get('value');
       if (value !== undefined) accessibleText.push(value);
     }
-    if (tagName === 'meta') {
+    if (readerVisible && tagName === 'meta') {
       const metadataName = (attributes.get('name') ?? attributes.get('property'))?.toLowerCase();
       const content = attributes.get('content');
       if (metadataName && builtPublicMetadataNames.has(metadataName) && content !== undefined) {
@@ -1551,18 +1862,19 @@ function parsedBuiltReaderDocument(contents: string): {
         accessibleText.push(content);
       }
     }
-    if (tagName === 'br') {
+    if (readerVisible && tagName === 'br') {
       boundary();
       return;
     }
-    const isBlock = builtBlockElements.has(tagName);
+    const isBlock = readerVisible && builtBlockElements.has(tagName);
     if (isBlock) boundary();
-    for (const child of node.childNodes) visit(child);
+    for (const child of htmlChildNodes(node)) visit(child, readerVisible);
     if (isBlock) boundary();
   };
   visit(parse(contents, { scriptingEnabled: false }));
   return {
     visibleText: text.join(''),
+    securityText,
     accessibleText,
     urls,
     srcdocs,
@@ -1575,6 +1887,7 @@ function scanBuiltReaderDocument(contents: string, relativePath: string, srcdocD
   scanEmbeddedCssGeneratedProse(contents, 'html', relativePath);
   const {
     visibleText,
+    securityText,
     accessibleText,
     urls,
     srcdocs,
@@ -1588,12 +1901,19 @@ function scanBuiltReaderDocument(contents: string, relativePath: string, srcdocD
   for (const style of inlineStyles) {
     scanCssGeneratedProse(style, `${relativePath} inline style`, 'declarationList');
   }
-  for (const source of scriptSources) {
-    if (scriptSourceHasDangerousScheme(source, `${relativePath} script.ts`)) {
-      throw new Error(`${relativePath} contains a dangerous URL scheme in an embedded script`);
+  for (const script of scriptSources) {
+    const sentinel = builtScriptSourceSentinel(script, `${relativePath} script`);
+    if (sentinel) {
+      throw new Error(`${relativePath} contains a forbidden embedded script sentinel (${sentinel})`);
     }
   }
   for (const url of urls) assertBuiltReaderUrlSafe(url, relativePath);
+  for (const prose of securityText) {
+    const sentinel = decodedFragmentSentinel(prose);
+    if (sentinel) {
+      throw new Error(`${relativePath} contains a forbidden decoded HTML text sentinel (${sentinel})`);
+    }
+  }
   for (const prose of [visibleText, ...accessibleText]) {
     const sentinel = privateSentinel(prose);
     if (sentinel) throw new Error(`${relativePath} contains a forbidden private prose sentinel (${sentinel})`);

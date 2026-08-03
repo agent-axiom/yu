@@ -256,6 +256,7 @@ const sourcePayloadPathPattern = /^src\/content\/book-release\/sources\/source-[
 const objectPayloadPathPattern = /^src\/content\/book-release\/objects\/object-[a-z0-9-]+\.json$/u;
 const mediaPayloadPathPattern = /^src\/content\/book-release\/media\/media-[a-z0-9-]+\.json$/u;
 const imagePayloadPathPattern = /^public\/images\/book-release\/[a-z0-9](?!.*\.\.)[a-z0-9._-]*\.(?:avif|jpe?g|png|svg|webp)$/u;
+const nulSeparator = String.fromCodePoint(0);
 
 function isExactPayloadPath(value: string): boolean {
   return entryPayloadPathPattern.test(value)
@@ -267,7 +268,7 @@ function isExactPayloadPath(value: string): boolean {
 }
 
 const payloadPathSchema = z.string().min(1).superRefine((value, context) => {
-  if (value.includes('\\') || value.includes('%') || value.includes('\0') || posix.normalize(value) !== value) {
+  if (value.includes('\\') || value.includes('%') || value.includes(nulSeparator) || posix.normalize(value) !== value) {
     context.addIssue({ code: 'custom', message: 'payload paths must be normalized POSIX paths without aliases' });
   }
   if (!isExactPayloadPath(value)) {
@@ -584,7 +585,7 @@ function entryPublicIdFromFilePath(filePath: unknown): string | null {
   if (typeof filePath !== 'string'
     || filePath.includes('\\')
     || filePath.includes('%')
-    || filePath.includes('\0')
+    || filePath.includes(nulSeparator)
     || posix.normalize(filePath) !== filePath) {
     return null;
   }
@@ -802,7 +803,7 @@ function registerReaderInvalidation(context: LoaderContext): ReaderInvalidationR
     fileURLToPath(releaseRootUrl(context)),
     fileURLToPath(publicImageRootUrl(context)),
   ];
-  const coordinatorKey = watchedPaths.join('\0');
+  const coordinatorKey = watchedPaths.join(nulSeparator);
   let watcherCoordinators = readerInvalidationCoordinators.get(watcher);
   if (!watcherCoordinators) {
     watcherCoordinators = new Map();
