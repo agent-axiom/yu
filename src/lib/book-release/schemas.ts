@@ -477,6 +477,7 @@ const readerEntryLoadSchema = z.object({
   entries: z.array(z.object({
     data: readerEntrySchema,
     body: z.string(),
+    filePath: z.string(),
   }).strict()),
 }).strict().superRefine((release, context) => {
   release.entries.forEach((entry, index) => {
@@ -537,9 +538,38 @@ export function validateReaderReleaseCollections(input: unknown): unknown {
     return readerReleaseCollectionSummarySchema.parse(input);
   }
   if (typeof input === 'object' && input !== null && !('manifest' in input)) {
+    assertLoadedEntryFileBindings(input);
     return readerEntryLoadSchema.parse(input);
   }
   return readerReleaseCollectionsSchema.parse(input);
+}
+
+function entryPublicIdFromFilePath(filePath: unknown): string | null {
+  if (typeof filePath !== 'string'
+    || filePath.includes('\\')
+    || filePath.includes('%')
+    || filePath.includes('\0')
+    || posix.normalize(filePath) !== filePath) {
+    return null;
+  }
+  if (!entryPayloadPathPattern.test(filePath)) return null;
+  const publicId = posix.basename(filePath, '.md');
+  return publicEntryIdSchema.safeParse(publicId).success ? publicId : null;
+}
+
+function assertLoadedEntryFileBindings(input: object): void {
+  if (!('entries' in input) || !Array.isArray(input.entries)) {
+    throw new Error('reader entry loader requires an entries array');
+  }
+  for (const entry of input.entries) {
+    const data = typeof entry === 'object' && entry !== null && 'data' in entry ? entry.data : null;
+    const filePath = typeof entry === 'object' && entry !== null && 'filePath' in entry ? entry.filePath : null;
+    const publicId = entryPublicIdFromFilePath(filePath);
+    const dataId = typeof data === 'object' && data !== null && 'id' in data ? data.id : null;
+    if (typeof dataId !== 'string' || publicId === null || dataId !== publicId) {
+      throw new Error('reader entry frontmatter id must match the filename public id');
+    }
+  }
 }
 
 function validatingEntryStore(store: DataStore): DataStore {
@@ -550,7 +580,7 @@ function validatingEntryStore(store: DataStore): DataStore {
     keys: () => store.keys(),
     set: (entry) => {
       validateReaderReleaseCollections({
-        entries: [{ data: entry.data, body: entry.body }],
+        entries: [{ data: entry.data, body: entry.body, filePath: entry.filePath }],
       });
       return store.set(entry);
     },
@@ -563,7 +593,11 @@ function validatingEntryStore(store: DataStore): DataStore {
 
 function validateLoadedEntries(store: DataStore): void {
   validateReaderReleaseCollections({
-    entries: store.values().map((entry) => ({ data: entry.data, body: entry.body })),
+    entries: store.values().map((entry) => ({
+      data: entry.data,
+      body: entry.body,
+      filePath: entry.filePath,
+    })),
   });
 }
 
@@ -587,6 +621,25 @@ const releaseCollectionSpecs = [
 
 function releaseRootUrl(context: LoaderContext): URL {
   return new URL('./src/content/book-release/', context.config.root);
+}
+
+function publicImageRootUrl(context: LoaderContext): URL {
+  return new URL('./public/images/book-release/', context.config.root);
+}
+
+function directoryHasPayload(directory: URL): boolean {
+  try {
+    return readdirSync(directory).length > 0;
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
+function hasOrphanReaderPayload(context: LoaderContext): boolean {
+  const contentRoot = releaseRootUrl(context);
+  return releaseCollectionSpecs.some(([collection]) => directoryHasPayload(new URL(`${collection}/`, contentRoot)))
+    || directoryHasPayload(publicImageRootUrl(context));
 }
 
 function readReleaseCollectionSummary(root: URL): {
@@ -617,6 +670,9 @@ function validateLoadedManifest(context: LoaderContext): void {
   const root = releaseRootUrl(context);
   if (!existsSync(new URL('manifest.json', root))) {
     context.store.clear();
+    if (hasOrphanReaderPayload(context)) {
+      throw new Error('reader release payload must not exist without manifest');
+    }
     return;
   }
   const entries = context.store.values();
@@ -651,11 +707,14 @@ export function withReaderManifestValidation(baseLoader: Loader): Loader {
       await syncAndValidate();
 
       if (!context.watcher) return;
-      const releasePath = fileURLToPath(releaseRootUrl(context));
-      context.watcher.add(releasePath);
+      const watchedPaths = [
+        fileURLToPath(releaseRootUrl(context)),
+        fileURLToPath(publicImageRootUrl(context)),
+      ];
+      context.watcher.add(watchedPaths);
       let reloadQueue = Promise.resolve();
       const scheduleValidation = (changedPath: string) => {
-        if (!isInsideReleaseRoot(releasePath, changedPath)) return;
+        if (!watchedPaths.some((rootPath) => isInsideReleaseRoot(rootPath, changedPath))) return;
         reloadQueue = reloadQueue
           .then(syncAndValidate)
           .catch((error: unknown) => {

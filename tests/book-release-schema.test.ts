@@ -94,7 +94,7 @@ function createLoaderContext(root: URL, store = createMemoryStore(), watcher?: L
   return context as unknown as LoaderContext;
 }
 
-async function createReleaseTree(options: { manifest?: boolean; omit?: 'notes' } = {}) {
+async function createReleaseTree(options: { manifest?: boolean; omit?: 'notes'; payload?: boolean } = {}) {
   const rootPath = await mkdtemp(join(tmpdir(), 'yu-reader-loader-'));
   const releasePath = join(rootPath, 'src/content/book-release');
   const files = [
@@ -107,10 +107,12 @@ async function createReleaseTree(options: { manifest?: boolean; omit?: 'notes' }
     ['media', 'media-site-context.json'],
   ] as const;
   await mkdir(releasePath, { recursive: true });
-  for (const [directory, name] of files) {
-    if (directory === options.omit) continue;
-    await mkdir(join(releasePath, directory), { recursive: true });
-    await writeFile(join(releasePath, directory, name), directory === 'entries' ? '# Глава\n\nТекст.' : '{}');
+  if (options.payload !== false) {
+    for (const [directory, name] of files) {
+      if (directory === options.omit) continue;
+      await mkdir(join(releasePath, directory), { recursive: true });
+      await writeFile(join(releasePath, directory, name), directory === 'entries' ? '# Глава\n\nТекст.' : '{}');
+    }
   }
   if (options.manifest !== false) {
     await writeFile(join(releasePath, 'manifest.json'), JSON.stringify(validManifest));
@@ -363,6 +365,29 @@ describe('manifest v4 and attestation v3', () => {
     })).toThrow();
   });
 
+  it('requires every top-level review-attestation field', () => {
+    for (const key of Object.keys(validManifest.reviewAttestation)) {
+      expect(() => readerReviewAttestationSchema.parse(
+        withoutKey(validManifest.reviewAttestation, key),
+      )).toThrow();
+    }
+  });
+
+  it('rejects wrong reviewed-payload and content-binding identities', () => {
+    expect(() => readerReviewedPayloadSchema.parse({
+      ...validManifest.reviewAttestation.reviewedPayload,
+      format: 'yu-reader-payload-v2',
+    })).toThrow();
+    expect(() => readerContentBindingSchema.parse({
+      ...validManifest.reviewAttestation.contentBinding,
+      algorithm: 'sha512',
+    })).toThrow();
+    expect(() => readerContentBindingSchema.parse({
+      ...validManifest.reviewAttestation.contentBinding,
+      format: 'yu-reader-release-v2',
+    })).toThrow();
+  });
+
   it.each([
     ['cycle', { reviewAttestation: { ...validManifest.reviewAttestation, cycleId: 'cycle-03' } }],
     ['target', { reviewAttestation: { ...validManifest.reviewAttestation, targetCommit: '1'.repeat(40) } }],
@@ -442,7 +467,12 @@ describe('production reader collection loaders', () => {
     const baseLoader: Loader = {
       name: 'fixture-entry-loader',
       load: async ({ store }) => {
-        store.set({ id: validEntry.id, data: { ...validEntry, readingMinutes: 1 }, body });
+        store.set({
+          id: validEntry.id,
+          data: { ...validEntry, readingMinutes: 1 },
+          body,
+          filePath: 'src/content/book-release/entries/chapter-04.md',
+        });
       },
     };
     const wrapped = withReaderEntryValidation(baseLoader);
@@ -464,11 +494,17 @@ describe('production reader collection loaders', () => {
     const baseLoader: Loader = {
       name: 'watching-entry-loader',
       load: async ({ store, watcher: activeWatcher }) => {
-        store.set({ id: validEntry.id, data: validEntry, body });
+        store.set({
+          id: validEntry.id,
+          data: validEntry,
+          body,
+          filePath: 'src/content/book-release/entries/chapter-04.md',
+        });
         activeWatcher?.on('change', () => store.set({
           id: validEntry.id,
           data: { ...validEntry, readingMinutes: 1 },
           body,
+          filePath: 'src/content/book-release/entries/chapter-04.md',
         }));
       },
     };
@@ -476,6 +512,24 @@ describe('production reader collection loaders', () => {
     await withReaderEntryValidation(baseLoader).load(createLoaderContext(pathToFileURL(`${tmpdir()}/`), store, watcher));
     expect(() => callbacks.get('change')?.('entry.md')).toThrow(/reading minutes/i);
     expect(store.get(validEntry.id)?.data.readingMinutes).toBe(2);
+  });
+
+  it.each(['prologue', 'chapter-05'])('rejects frontmatter id %s that disagrees with the Markdown filename', async (id) => {
+    const { withReaderEntryValidation } = await loadFactories();
+    const baseLoader: Loader = {
+      name: 'mismatched-entry-loader',
+      load: async ({ store }) => {
+        store.set({
+          id: 'chapter-04',
+          data: { ...validEntry, id },
+          body: Array.from({ length: 221 }, () => 'слово').join(' '),
+          filePath: 'src/content/book-release/entries/chapter-04.md',
+        });
+      },
+    };
+    await expect(withReaderEntryValidation(baseLoader)
+      .load(createLoaderContext(pathToFileURL(`${tmpdir()}/`))))
+      .rejects.toThrow(/filename public id/i);
   });
 
   it('rejects manifest counts that differ from real single-level collection files', async () => {
@@ -497,13 +551,40 @@ describe('production reader collection loaders', () => {
 
   it('keeps a baseline without a manifest buildable and clears a stale cached manifest', async () => {
     const { withReaderManifestValidation } = await loadFactories();
-    const tree = await createReleaseTree({ manifest: false });
+    const tree = await createReleaseTree({ manifest: false, payload: false });
     try {
       const store = createMemoryStore([{ id: 'manifest', data: validManifest }]);
       const baseLoader: Loader = { name: 'empty-manifest-loader', load: async () => undefined };
       await expect(withReaderManifestValidation(baseLoader).load(createLoaderContext(tree.root, store)))
         .resolves.toBeUndefined();
       expect(store.values()).toEqual([]);
+    } finally {
+      await rm(tree.rootPath, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects orphan content records when the manifest is absent', async () => {
+    const { withReaderManifestValidation } = await loadFactories();
+    const tree = await createReleaseTree({ manifest: false });
+    try {
+      const baseLoader: Loader = { name: 'orphan-content-loader', load: async () => undefined };
+      await expect(withReaderManifestValidation(baseLoader).load(createLoaderContext(tree.root)))
+        .rejects.toThrow(/payload.*without manifest/i);
+    } finally {
+      await rm(tree.rootPath, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects an orphan public image when the manifest is absent', async () => {
+    const { withReaderManifestValidation } = await loadFactories();
+    const tree = await createReleaseTree({ manifest: false, payload: false });
+    try {
+      const imageDirectory = join(tree.rootPath, 'public/images/book-release');
+      await mkdir(imageDirectory, { recursive: true });
+      await writeFile(join(imageDirectory, 'orphan.webp'), 'orphan image bytes');
+      const baseLoader: Loader = { name: 'orphan-image-loader', load: async () => undefined };
+      await expect(withReaderManifestValidation(baseLoader).load(createLoaderContext(tree.root)))
+        .rejects.toThrow(/payload.*without manifest/i);
     } finally {
       await rm(tree.rootPath, { recursive: true, force: true });
     }
