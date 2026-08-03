@@ -105,6 +105,10 @@ const privateRepositoryPattern = new RegExp(
   `(?:^|[^a-z0-9_%-])agent-axiom/${'yu' + '-book'}(?:\\.git)?(?=$|[^a-z0-9._%-])`,
   'iu',
 );
+const releaseRepositoryPathPattern = new RegExp(
+  `(?:^|/)agent-axiom/${'yu' + '-book'}(?:\\.git)?(?=$|[./])`,
+  'iu',
+);
 const externalHttpsTokenPattern = /https:\/\/[^\s<>{}\[\]"'`()]+/giu;
 const percentRunPattern = /(?:%[0-9a-f]{2})+/giu;
 const securityEntityNames = 'sol|bsol|frasl|num|percnt|colon|period|hyphen|minus|lowbar|commat';
@@ -259,6 +263,15 @@ function hasPrivateBackslashPath(value: string): boolean {
   return patterns.some((pattern) => pattern.test(value));
 }
 
+function hasPrivateRepositoryWithMixedSeparators(value: string): boolean {
+  const separator = '(?:/|\\\\)+';
+  const repository = `agent-axiom${separator}${'yu' + '-book'}`;
+  return new RegExp(
+    `(?:^|[^a-z0-9._-])${repository}(?:\\.git)?(?=$|[^a-z0-9._-])`,
+    'iu',
+  ).test(value);
+}
+
 function privateSentinel(value: string): string | null {
   assertNoForbiddenUnicodeControls(value, 'reader text');
   const canonical = canonicalSecurityValue(value);
@@ -275,7 +288,8 @@ function runtimeSourceSentinel(value: string, directiveScanValue = value): strin
   if (forbiddenUnicodeTextControlPattern.test(value)) return 'Unicode control';
   const canonical = canonicalSecurityValue(value);
   if (forbiddenUnicodeTextControlPattern.test(canonical)) return 'decoded Unicode control';
-  if (privateRepositoryPattern.test(canonicalizeRepositoryScanValue(canonical, false))) {
+  if (privateRepositoryPattern.test(canonicalizeRepositoryScanValue(canonical, false))
+    || hasPrivateRepositoryWithMixedSeparators(canonical)) {
     return 'private repository coordinate';
   }
   if (privateIdPattern.test(canonical)) return 'private-prefixed identifier';
@@ -798,12 +812,16 @@ const builtBlockElements = new Set([
 ]);
 const exactArtifactDirectivePattern = /(?::{2,3}[a-z][a-z0-9-]*(?:\[[^\]\r\n]*\])?(?:\{[^{}\r\n]*\})?|:[a-z][a-z0-9-]*\[[^\]\r\n]*\](?:\{[^{}\r\n]*\})?)/iu;
 const dangerousArtifactSchemePattern = /(?:^|[^a-z0-9+.-])(?:data|file|javascript|vbscript):(?=\S)/iu;
+const dangerousIsolatedSchemePattern = /(?:^|[^a-z0-9+.-])(?:data|file|javascript|vbscript):[\u0009-\u000d\u0020]*/iu;
+const scriptLikeArtifactExtensions = /\.(?:cjs|cts|js|jsx|json|map|mjs|mts|ts|tsx|webmanifest)$/iu;
 const strictUtf8 = new TextDecoder('utf-8', { fatal: true });
 const maxSrcdocDepth = 8;
 const maxCssSourceLength = 1_000_000;
 const maxCssNodes = 20_000;
 const maxCssNestingDepth = 128;
 const maxEmbeddedStyleBlocks = 64;
+const maxInlineStyleAttributes = 10_000;
+const zeroWidthCssContentIdentifiers = new Set(['no-close-quote', 'no-open-quote']);
 const allowedStaticCssContentFunctions = new Set([
   'conic-gradient',
   'counter',
@@ -830,6 +848,7 @@ type CssNode = {
   children?: Iterable<CssNode> | null;
 };
 type CssParse = (source: string, options?: {
+  context?: 'stylesheet' | 'declarationList';
   positions?: boolean;
   onParseError?: (error: unknown) => void;
 }) => CssNode;
@@ -844,9 +863,92 @@ type CssWalk = ((root: CssNode, visitor: ((node: CssNode) => unknown) | CssWalkO
 const cssTreeRequire = createRequire(import.meta.url);
 const parseCss = cssTreeRequire('css-tree/parser') as CssParse;
 const walkCss = cssTreeRequire('css-tree/walker') as CssWalk;
+const tsCompiler = cssTreeRequire('typescript') as typeof import('typescript');
 const decodeCssIdentifier = (cssTreeRequire('css-tree/utils') as {
   ident: { decode: (value: string) => string };
 }).ident.decode;
+
+function hasDangerousSchemeInIsolatedValue(value: string): boolean {
+  if (dangerousIsolatedSchemePattern.test(value)) return true;
+  try {
+    return dangerousIsolatedSchemePattern.test(canonicalSecurityValue(value));
+  } catch {
+    // Cooked source literals may contain escaped controls that are harmless
+    // unless the literal already exposes a dangerous scheme before them.
+    return false;
+  }
+}
+
+function scriptSourceHasDangerousScheme(source: string, label: string): boolean {
+  const sourceFile = tsCompiler.createSourceFile(
+    label,
+    source,
+    tsCompiler.ScriptTarget.Latest,
+    true,
+    tsCompiler.ScriptKind.TSX,
+  );
+  let found = false;
+  const seenComments = new Set<number>();
+  const scanCommentRanges = (ranges: readonly import('typescript').CommentRange[] | undefined) => {
+    for (const range of ranges ?? []) {
+      if (seenComments.has(range.pos)) continue;
+      seenComments.add(range.pos);
+      if (hasDangerousSchemeInIsolatedValue(source.slice(range.pos, range.end))) found = true;
+    }
+  };
+  const visit = (node: import('typescript').Node): void => {
+    scanCommentRanges(tsCompiler.getLeadingCommentRanges(source, node.getFullStart()));
+    scanCommentRanges(tsCompiler.getTrailingCommentRanges(source, node.end));
+    if (tsCompiler.isStringLiteralLike(node) && hasDangerousSchemeInIsolatedValue(node.text)) {
+      found = true;
+    }
+    if (!found) tsCompiler.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  scanCommentRanges(tsCompiler.getLeadingCommentRanges(source, sourceFile.endOfFileToken.getFullStart()));
+  return found;
+}
+
+function astroSourceHasDangerousScheme(source: string, label: string): boolean {
+  const parsed = parseAstro(source, { position: true });
+  if (parsed.diagnostics.some((diagnostic) => diagnostic.severity === 1)) {
+    throw new Error(`${label} contains invalid Astro syntax`);
+  }
+  let found = false;
+  const scanScript = (value: string, suffix: string) => {
+    if (!found && scriptSourceHasDangerousScheme(value, `${label}${suffix}.tsx`)) found = true;
+  };
+  const visit = (node: AstroNode): void => {
+    if (found) return;
+    if (node.type === 'frontmatter') scanScript(node.value, '.frontmatter');
+    if (node.type === 'expression') {
+      scanScript(
+        node.children.map((child) => child.type === 'text' ? child.value : '').join(''),
+        '.expression',
+      );
+    }
+    if ((node.type === 'element' || node.type === 'component' || node.type === 'custom-element')) {
+      for (const attribute of node.attributes) {
+        if (attribute.kind === 'quoted' || attribute.kind === 'empty') {
+          if (hasDangerousSchemeInIsolatedValue(attribute.value)) found = true;
+        } else {
+          scanScript(attribute.value, `.attribute-${attribute.name}`);
+        }
+      }
+      if (node.type === 'element' && node.name.toLowerCase() === 'script') {
+        scanScript(
+          node.children.map((child) => child.type === 'text' ? child.value : '').join(''),
+          '.script',
+        );
+      }
+    }
+    if ('children' in node) {
+      for (const child of node.children) visit(child);
+    }
+  };
+  visit(parsed.ast);
+  return found;
+}
 
 type HtmlNode = DefaultTreeAdapterMap['node'];
 type HtmlParentNode = DefaultTreeAdapterMap['parentNode'];
@@ -916,10 +1018,15 @@ function assertCssLexicalBounds(source: string, label: string): void {
   if (quote || inComment || stack.length > 0) throw new Error(`${label} contains unterminated CSS syntax`);
 }
 
-function parseCssSecurityAst(source: string, label: string): CssNode {
+function parseCssSecurityAst(
+  source: string,
+  label: string,
+  context: 'stylesheet' | 'declarationList' = 'stylesheet',
+): CssNode {
   try {
     assertCssLexicalBounds(source, label);
     const ast = parseCss(source, {
+      context,
       positions: true,
       onParseError(error) {
         throw error;
@@ -1091,6 +1198,29 @@ function astroStaticStyleBlocks(source: string, label: string): StaticStyleBlock
   return blocks;
 }
 
+function astroStaticInlineStyles(source: string, label: string): string[] {
+  const parsed = parseAstro(source, { position: true });
+  if (parsed.diagnostics.some((diagnostic) => diagnostic.severity === 1)) {
+    throw new Error(`${label} contains invalid Astro syntax`);
+  }
+  const styles: string[] = [];
+  const visit = (node: AstroNode): void => {
+    if (node.type === 'element' || node.type === 'component' || node.type === 'custom-element') {
+      const style = node.attributes.find((attribute) => attribute.name.toLowerCase() === 'style');
+      if (style?.kind === 'quoted') styles.push(style.value);
+    }
+    if ('children' in node) {
+      for (const child of node.children) visit(child);
+    }
+  };
+  visit(parsed.ast);
+  if (styles.length > maxInlineStyleAttributes
+    || styles.reduce((total, style) => total + style.length, 0) > maxCssSourceLength) {
+    throw new Error(`${label} exceeds the inline CSS input bound`);
+  }
+  return styles;
+}
+
 function staticStyleBlocks(source: string, context: ArtifactSyntaxContext, label: string): StaticStyleBlock[] {
   const blocks = context === 'html'
     ? htmlStaticStyleBlocks(source)
@@ -1120,9 +1250,18 @@ function artifactContext(relativePath: string, runtime: boolean): ArtifactSyntax
   return 'generic';
 }
 
-function scanCssGeneratedProse(stylesheet: string, label: string): void {
-  const ast = parseCssSecurityAst(stylesheet, label);
+function scanCssGeneratedProse(
+  stylesheet: string,
+  label: string,
+  context: 'stylesheet' | 'declarationList' = 'stylesheet',
+): void {
+  const ast = parseCssSecurityAst(stylesheet, label, context);
   walkCss(ast, (node) => {
+    if (node.type === 'Url') {
+      if (typeof node.value !== 'string') throw new Error(`${label} contains an unresolved CSS URL`);
+      assertBuiltReaderUrlSafe(node.value, `${label} CSS URL`);
+      return;
+    }
     if (node.type !== 'Declaration'
       || typeof node.property !== 'string'
       || decodeCssIdentifier(node.property).toLowerCase() !== 'content'
@@ -1138,6 +1277,11 @@ function scanCssGeneratedProse(stylesheet: string, label: string): void {
       for (const child of parent.children ? [...parent.children] : []) {
         if (child.type === 'String' && typeof child.value === 'string') {
           currentRun += child.value;
+          continue;
+        }
+        if (child.type === 'Identifier'
+          && typeof child.name === 'string'
+          && zeroWidthCssContentIdentifiers.has(decodeCssIdentifier(child.name).toLowerCase())) {
           continue;
         }
         flush();
@@ -1164,6 +1308,11 @@ function scanEmbeddedCssGeneratedProse(source: string, context: ArtifactSyntaxCo
   for (const block of staticStyleBlocks(source, context, label)) {
     scanCssGeneratedProse(block.source, `${label} style block`);
   }
+  if (context === 'astro') {
+    for (const style of astroStaticInlineStyles(source, label)) {
+      scanCssGeneratedProse(style, `${label} inline style`, 'declarationList');
+    }
+  }
 }
 
 function releasePathSentinel(relativePath: string): string | null {
@@ -1171,7 +1320,7 @@ function releasePathSentinel(relativePath: string): string | null {
   if (canonical.includes('\\')) return 'ambiguous reverse solidus';
   const repositoryPath = canonicalizeRepositoryScanValue(canonical);
   if (privateRepositoryPattern.test(repositoryPath)
-    || /(?:^|\/)agent-axiom\/yu-book(?:\.git)?(?=$|[./])/iu.test(repositoryPath)) {
+    || releaseRepositoryPathPattern.test(repositoryPath)) {
     return 'private repository coordinate';
   }
   if (hasPrivatePath(canonical)) return 'private repository path';
@@ -1222,6 +1371,12 @@ async function scanRuntimePath(projectRoot: string, path: string): Promise<void>
   let sentinel: string | null;
   try {
     sentinel = runtimeSourceSentinel(contents, directiveScanSource(contents, context, relativePath));
+    if (!sentinel && ((context === 'astro' && astroSourceHasDangerousScheme(contents, relativePath))
+      || (context === 'generic'
+        && scriptLikeArtifactExtensions.test(relativePath)
+        && scriptSourceHasDangerousScheme(contents, relativePath)))) {
+      sentinel = 'dangerous URL scheme';
+    }
     scanEmbeddedCssGeneratedProse(contents, context, relativePath);
   } catch (error) {
     throw new Error(`${relativePath} contains invalid canonical security text`, { cause: error });
@@ -1312,6 +1467,13 @@ function scanBuiltTextArtifact(
       strictCanonical,
       directiveScanSource(contents, context, relativePath),
     );
+    if (!sentinel
+      && strictCanonical
+      && context === 'generic'
+      && scriptLikeArtifactExtensions.test(relativePath)
+      && scriptSourceHasDangerousScheme(contents, relativePath)) {
+      sentinel = 'dangerous URL scheme';
+    }
   } catch (error) {
     throw new Error(`${relativePath} contains invalid canonical security text`, { cause: error });
   }
@@ -1323,11 +1485,15 @@ function parsedBuiltReaderDocument(contents: string): {
   accessibleText: string[];
   urls: string[];
   srcdocs: string[];
+  inlineStyles: string[];
+  scriptSources: string[];
 } {
   const text: string[] = [];
   const accessibleText: string[] = [];
   const urls: string[] = [];
   const srcdocs: string[] = [];
+  const inlineStyles: string[] = [];
+  const scriptSources: string[] = [];
   const boundary = () => {
     if (text.length > 0 && !text.at(-1)?.endsWith('\n')) text.push('\n');
   };
@@ -1351,7 +1517,14 @@ function parsedBuiltReaderDocument(contents: string): {
     const tagName = node.tagName.toLowerCase();
     const attributes = new Map(node.attrs.map((attribute) => [attribute.name.toLowerCase(), attribute.value]));
     if (tagName === 'iframe' && attributes.has('srcdoc')) srcdocs.push(attributes.get('srcdoc')!);
-    if ((tagName === 'option' || tagName === 'track') && attributes.has('label')) {
+    if (attributes.has('style')) inlineStyles.push(attributes.get('style')!);
+    if (tagName === 'script') {
+      scriptSources.push(node.childNodes
+        .filter(isHtmlTextNode)
+        .map((child) => child.value)
+        .join(''));
+    }
+    if ((tagName === 'option' || tagName === 'optgroup' || tagName === 'track') && attributes.has('label')) {
       accessibleText.push(attributes.get('label')!);
     }
     if (tagName === 'th' && attributes.has('abbr')) accessibleText.push(attributes.get('abbr')!);
@@ -1371,6 +1544,12 @@ function parsedBuiltReaderDocument(contents: string): {
       if (metadataName && builtPublicMetadataNames.has(metadataName) && content !== undefined) {
         accessibleText.push(content);
       }
+      const itemProperties = attributes.get('itemprop')
+        ?.toLowerCase()
+        .split(/[\u0009-\u000d\u0020]+/u);
+      if (itemProperties?.includes('description') && content !== undefined) {
+        accessibleText.push(content);
+      }
     }
     if (tagName === 'br') {
       boundary();
@@ -1382,12 +1561,38 @@ function parsedBuiltReaderDocument(contents: string): {
     if (isBlock) boundary();
   };
   visit(parse(contents, { scriptingEnabled: false }));
-  return { visibleText: text.join(''), accessibleText, urls, srcdocs };
+  return {
+    visibleText: text.join(''),
+    accessibleText,
+    urls,
+    srcdocs,
+    inlineStyles,
+    scriptSources,
+  };
 }
 
 function scanBuiltReaderDocument(contents: string, relativePath: string, srcdocDepth = 0): void {
   scanEmbeddedCssGeneratedProse(contents, 'html', relativePath);
-  const { visibleText, accessibleText, urls, srcdocs } = parsedBuiltReaderDocument(contents);
+  const {
+    visibleText,
+    accessibleText,
+    urls,
+    srcdocs,
+    inlineStyles,
+    scriptSources,
+  } = parsedBuiltReaderDocument(contents);
+  if (inlineStyles.length > maxInlineStyleAttributes
+    || inlineStyles.reduce((total, style) => total + style.length, 0) > maxCssSourceLength) {
+    throw new Error(`${relativePath} exceeds the inline CSS input bound`);
+  }
+  for (const style of inlineStyles) {
+    scanCssGeneratedProse(style, `${relativePath} inline style`, 'declarationList');
+  }
+  for (const source of scriptSources) {
+    if (scriptSourceHasDangerousScheme(source, `${relativePath} script.ts`)) {
+      throw new Error(`${relativePath} contains a dangerous URL scheme in an embedded script`);
+    }
+  }
   for (const url of urls) assertBuiltReaderUrlSafe(url, relativePath);
   for (const prose of [visibleText, ...accessibleText]) {
     const sentinel = privateSentinel(prose);

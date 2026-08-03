@@ -446,6 +446,12 @@ describe('release-layer sentinel scan', () => {
     ['table-header abbreviation', '<table><tr><th abbr="claim-secret">Jade</th></tr></table>'],
     ['Open Graph image alternative', '<meta property="og:image:alt" content="claim-secret"><main>Jade</main>'],
     ['author metadata', '<meta name="author" content="claim-secret"><main>Jade</main>'],
+    ['option-group label', '<select><optgroup label="claim-secret"><option>Jade</option></optgroup></select>'],
+    ['schema itemprop description', '<meta itemprop="description" content="claim-secret"><main>Jade</main>'],
+    [
+      'schema itemprop description token',
+      '<meta itemprop="name description" content="claim-secret"><main>Jade</main>',
+    ],
   ])('rejects a private ID in accessible %s', async (_label, markup) => {
     const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-dist-accessible-'));
     try {
@@ -525,16 +531,57 @@ describe('release-layer sentinel scan', () => {
     ['generated env()', '.jade::before{content:env(reader-label)}'],
     ['nested strings in an unknown function', '.jade::before{content:foo("claim-" "secret")}'],
     ['nested strings in a static image function', '.jade::before{content:image("claim-" "secret")}'],
+    ['zero-width open quote token', '.jade::before{content:"claim-" no-open-quote "secret"}'],
+    ['zero-width close quote token', '.jade::before{content:"research" no-close-quote "/claims/secret"}'],
+    [
+      'accessible alternate text with zero-width quote token',
+      '.jade::before{content:url("/jade.webp") / "claim-" no-open-quote "secret"}',
+    ],
     ['unknown dynamic function', '.jade::before{content:target-text(url)}'],
     ['excessively encoded generated prose', `.jade::before{content:"${nestedPercentEncoding('claim-secret', 9)}"}`],
     ['nested directive in pseudo arguments', '::highlight(::private){color:inherit}'],
     ['malformed stylesheet', '.jade::before{content:"safe"'],
+    ['WHATWG JavaScript URL', '.jade{background-image:url("javascript: alert(1)")}'],
+    ['WHATWG data URL', '.jade{background-image:url("data: text/html,secret")}'],
+    ['escaped WHATWG JavaScript URL', String.raw`.jade{background-image:url("jav\61script: alert(1)")}`],
+    ['escaped WHATWG data URL', String.raw`.jade{background-image:url("\64 ata: text/html,secret")}`],
   ])('rejects unsafe CSS-generated prose in %s', async (_label, stylesheet) => {
     const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-css-content-'));
     try {
       const isDocument = stylesheet.startsWith('<style>');
       await writeLayerFile(root, isDocument ? 'dist/book/index.html' : 'dist/book/styles.css', stylesheet);
       await expect(scanReaderReleaseLayers(root)).rejects.toThrow(/private|sentinel|CSS|content|attr|index\.html|styles\.css/iu);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['direct content', '<span style="content:&quot;claim-secret&quot;">Jade</span>'],
+    ['escaped property and value', String.raw`<span style="\63 ontent:&quot;claim\2d secret&quot;">Jade</span>`],
+    [
+      'nested srcdoc content',
+      nestedSrcdoc(2, '<span style="content:&quot;claim-secret&quot;">Jade</span>'),
+    ],
+  ])('rejects private CSS-generated prose in an inline %s style', async (_label, markup) => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-inline-style-'));
+    try {
+      await writeLayerFile(root, 'dist/book/index.html', markup);
+      await expect(scanReaderReleaseLayers(root)).rejects.toThrow(/private|sentinel|CSS|content|style|srcdoc|index\.html/iu);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts sentinel-free static inline CSS declarations', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-inline-style-safe-'));
+    try {
+      await writeLayerFile(
+        root,
+        'dist/book/index.html',
+        '<span style="color:inherit;content:&quot;safe jade&quot;">Jade</span>',
+      );
+      await expect(scanReaderReleaseLayers(root)).resolves.toBeUndefined();
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -580,6 +627,20 @@ describe('release-layer sentinel scan', () => {
         String.raw`<style>.jade::before{\63 ontent:"claim\2d secret"}</style>`,
       ].join('\n'));
       await expect(scanReaderReleaseLayers(root)).rejects.toThrow(/private|sentinel|CSS|content|Reader\.astro/iu);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects an escaped dangerous CSS URL in a static Astro inline style', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-astro-inline-url-'));
+    try {
+      await writeLayerFile(
+        root,
+        'src/layouts/Reader.astro',
+        String.raw`<main style="background-image:url('jav\61script: alert(1)')">Jade</main>`,
+      );
+      await expect(scanReaderReleaseLayers(root)).rejects.toThrow(/URL|scheme|CSS|style|Reader\.astro/iu);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -661,6 +722,8 @@ describe('release-layer sentinel scan', () => {
     ],
     ['invalid canonical UTF-8 run', 'dist/book/runtime.js', 'const malformed = "%FF";'],
     ['stylesheet dangerous scheme', 'dist/book/styles.css', '.cover{background-image:url(javascript:alert(1))}'],
+    ['built JavaScript WHATWG scheme', 'dist/book/runtime.js', 'const value = "javascript: alert(1)";'],
+    ['built JavaScript newline scheme', 'dist/book/runtime.js', 'const value = `javascript:\nalert(1)`;'],
     ['runtime Unicode format control', 'dist/book/runtime.js', `const label = "jade\u200Bsecret";`],
   ])('rejects forbidden exact bytes in a built %s', async (_label, path, contents) => {
     const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-dist-bytes-'));
@@ -761,6 +824,12 @@ describe('release-layer sentinel scan', () => {
     ['data scheme', 'const value = "data:text/html,secret";'],
     ['file scheme', 'const value = "file:///Users/reader/private.md";'],
     ['VBScript scheme', 'const value = "vbscript:msgbox(1)";'],
+    ['JavaScript scheme with a space', 'const value = "javascript: alert(1)";'],
+    ['JavaScript scheme with a newline', 'const value = `javascript:\nalert(1)`;'],
+    ['data scheme with a space', 'const value = "data: text/html,secret";'],
+    ['file scheme with a space', 'const value = "file: /Users/reader/private.md";'],
+    ['VBScript scheme with a space', 'const value = "vbscript: msgbox(1)";'],
+    ['mixed repository separators', String.raw`const value = "agent-axiom/\yu-book";`],
     ['C0 control', `const value = "jade\u001Bsecret";`],
   ])('rejects an unsafe runtime source boundary: %s', async (_label, contents) => {
     const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-runtime-boundary-'));
