@@ -105,6 +105,7 @@ const markdownDirectiveOptions = {
 const privateRepositoryOrganization = 'agent' + '-axiom';
 const privateRepositoryName = 'yu' + '-book';
 const externalHttpsTokenPattern = /https:\/\/[^\s<>{}\[\]"'`()]+/giu;
+const rootedLocalPathCandidatePattern = /(?:[a-z]:[\\/]|~[\\/]|[\\/]{1,2})[^\s<>"'`()\[\]{}]+/giu;
 const percentRunPattern = /(?:%[0-9a-f]{2})+/giu;
 const securityEntityNames = 'sol|bsol|frasl|num|percnt|colon|period|hyphen|minus|lowbar|commat|tab|newline';
 const numericSecurityEntity = '#(?:' + 'x[0-9a-f]+' + '|[0-9]+)';
@@ -211,8 +212,10 @@ function canonicalSecurityValue(value: string): string {
 function canonicalizeMixedPathSegments(value: string): string {
   const resolved: string[] = [];
   const slashed = value.replace(/\\/gu, '/');
-  const root = slashed.startsWith('//') ? '//' : slashed.startsWith('/') ? '/' : '';
-  for (const segment of slashed.split('/')) {
+  const driveRoot = /^[a-z]:\//iu.exec(slashed)?.[0] ?? '';
+  const root = slashed.startsWith('//') ? '//' : slashed.startsWith('/') ? '/' : driveRoot;
+  const remainder = root ? slashed.slice(root.length) : slashed;
+  for (const segment of remainder.split('/')) {
     if (segment === '' || segment === '.') continue;
     if (segment === '..') {
       const previous = resolved.at(-1);
@@ -262,13 +265,19 @@ function externalUrlQueryAndFragmentScan(value: string): string {
 }
 
 function hasPrivatePath(value: string): boolean {
-  const slashed = canonicalizeMixedPathSegments(externalUrlQueryAndFragmentScan(value));
+  const pathText = externalUrlQueryAndFragmentScan(value);
+  const scanValues = [
+    canonicalizeMixedPathSegments(pathText),
+    ...(pathText.match(rootedLocalPathCandidatePattern) ?? [])
+      .map((candidate) => canonicalizeMixedPathSegments(candidate)),
+  ];
   const privateRoots = ['rig' + 'hts', 'manu' + 'script', 'resea' + 'rch', 'edito' + 'rial'].join('|');
-  if (new RegExp(`(?:^|[^a-z0-9._-])(?:${privateRoots})/`, 'iu').test(slashed)) return true;
-  if (/(?:^|[^a-z0-9._-])\/(?:Users|home|private)\//iu.test(slashed)) return true;
-  if (/(?:^|[^a-z0-9._-])(?:[a-z]:\/|~\/)/iu.test(slashed)) return true;
-  if (/(?:^|[^a-z0-9._:-])\/\/[^/\s]+\//iu.test(slashed)) return true;
-  return false;
+  const privateRootPattern = new RegExp(`(?:^|[^a-z0-9._-])(?:${privateRoots})/`, 'iu');
+  return scanValues.some((slashed) =>
+    privateRootPattern.test(slashed)
+      || /(?:^|[^a-z0-9._-])\/(?:Users|home|private)\//iu.test(slashed)
+      || /(?:^|[^a-z0-9._-])(?:[a-z]:\/|~\/)/iu.test(slashed)
+      || /(?:^|[^a-z0-9._:-])\/\/[^/\s]+\//iu.test(slashed));
 }
 
 function privateSentinel(value: string): string | null {
@@ -857,6 +866,7 @@ const dangerousSchemePattern = new RegExp(
   'iu',
 );
 const strictUtf8 = new TextDecoder('utf-8', { fatal: true });
+const maxReleaseFileBytes = 64 * 1024 * 1024;
 const maxSrcdocDepth = 8;
 const maxCssSourceLength = 1_000_000;
 const maxCssNodes = 20_000;
@@ -957,11 +967,81 @@ function scriptKindForLabel(label: string): import('typescript').ScriptKind {
   return tsCompiler.ScriptKind.JS;
 }
 
+function scanDecodedTextRuns(
+  runs: readonly string[],
+  policy: DecodedFragmentPolicy,
+): string | null {
+  for (const run of runs) {
+    const sentinel = decodedFragmentSentinel(run, policy);
+    if (sentinel) return sentinel;
+  }
+  return null;
+}
+
+function jsxRenderedTextSentinel(
+  root: import('typescript').JsxElement | import('typescript').JsxFragment,
+): string | null {
+  const runs: string[] = [];
+  let run = '';
+  const flush = () => {
+    if (run) runs.push(run);
+    run = '';
+  };
+  const tagName = (node: import('typescript').JsxElement | import('typescript').JsxSelfClosingElement) => {
+    const tag = tsCompiler.isJsxElement(node) ? node.openingElement.tagName : node.tagName;
+    return tsCompiler.isIdentifier(tag) ? tag.text.toLowerCase() : null;
+  };
+  const visitChild = (node: import('typescript').JsxChild): void => {
+    if (tsCompiler.isJsxText(node)) {
+      run += node.text;
+      return;
+    }
+    if (tsCompiler.isJsxExpression(node)) {
+      const expression = node.expression;
+      if (expression && tsCompiler.isStringLiteralLike(expression)) run += expression.text;
+      else if (expression && (tsCompiler.isJsxElement(expression) || tsCompiler.isJsxFragment(expression))) {
+        visitContainer(expression);
+      }
+      return;
+    }
+    if (tsCompiler.isJsxSelfClosingElement(node)) {
+      const name = tagName(node);
+      if (name === 'br' || (name !== null && builtBlockElements.has(name))) flush();
+      return;
+    }
+    visitContainer(node);
+  };
+  const visitContainer = (
+    node: import('typescript').JsxElement | import('typescript').JsxFragment,
+  ): void => {
+    const name = tsCompiler.isJsxElement(node) ? tagName(node) : null;
+    const boundary = name !== null
+      && (builtBlockElements.has(name) || name === 'script' || name === 'style' || name === 'template');
+    if (boundary) flush();
+    for (const child of node.children) visitChild(child);
+    if (boundary) flush();
+  };
+  visitContainer(root);
+  flush();
+  return scanDecodedTextRuns(runs, decodedProsePolicy);
+}
+
+function jsxNodeHasRenderedParent(node: import('typescript').Node): boolean {
+  const parent = node.parent;
+  if (!parent) return false;
+  if (tsCompiler.isJsxElement(parent) || tsCompiler.isJsxFragment(parent)) return true;
+  return tsCompiler.isJsxExpression(parent)
+    && (tsCompiler.isJsxElement(parent.parent) || tsCompiler.isJsxFragment(parent.parent));
+}
+
 function scriptSourceSentinel(
   source: string,
   label: string,
   policy: DecodedFragmentPolicy = decodedArtifactPolicy,
 ): string | null {
+  if (scriptKindForLabel(label) === tsCompiler.ScriptKind.JSON) {
+    return jsonSourceSentinel(source, label);
+  }
   const sourceFile = tsCompiler.createSourceFile(
     label,
     source,
@@ -987,9 +1067,13 @@ function scriptSourceSentinel(
   const visit = (node: import('typescript').Node): void => {
     scanCommentRanges(tsCompiler.getLeadingCommentRanges(source, node.getFullStart()));
     scanCommentRanges(tsCompiler.getTrailingCommentRanges(source, node.end));
-    if (tsCompiler.isStringLiteralLike(node)
-      || tsCompiler.isTemplateLiteralToken(node)
-      || tsCompiler.isJsxText(node)) {
+    if ((tsCompiler.isJsxElement(node) || tsCompiler.isJsxFragment(node))
+      && !jsxNodeHasRenderedParent(node)) {
+      found = jsxRenderedTextSentinel(node) ?? found;
+    }
+    if (tsCompiler.isJsxText(node)) {
+      found = decodedFragmentSentinel(node.text, decodedProsePolicy) ?? found;
+    } else if (tsCompiler.isStringLiteralLike(node) || tsCompiler.isTemplateLiteralToken(node)) {
       found = decodedFragmentSentinel(node.text, policy) ?? found;
       if (tsCompiler.isStringLiteralLike(node)) {
         const sourceToken = source.slice(node.getStart(sourceFile), node.end);
@@ -1013,12 +1097,64 @@ function scriptSourceSentinel(
   return found;
 }
 
+function astroRenderedTextSentinel(root: AstroNode): string | null {
+  const runs: string[] = [];
+  let run = '';
+  const flush = () => {
+    if (run) runs.push(run);
+    run = '';
+  };
+  const visit = (node: AstroNode): void => {
+    if (node.type === 'text') {
+      run += node.value;
+      return;
+    }
+    if (node.type === 'element') {
+      const name = node.name.toLowerCase();
+      if (name === 'script' || name === 'style') {
+        flush();
+        return;
+      }
+      if (name === 'template') {
+        flush();
+        for (const child of node.children) visit(child);
+        flush();
+        return;
+      }
+      if (name === 'br') {
+        flush();
+        return;
+      }
+      const block = builtBlockElements.has(name);
+      if (block) flush();
+      for (const child of node.children) visit(child);
+      if (block) flush();
+      return;
+    }
+    if (node.type === 'component'
+      || node.type === 'custom-element'
+      || node.type === 'fragment'
+      || node.type === 'root') {
+      for (const child of node.children) visit(child);
+      return;
+    }
+    if (node.type === 'expression') {
+      for (const child of node.children) {
+        if (child.type !== 'text') visit(child);
+      }
+    }
+  };
+  visit(root);
+  flush();
+  return scanDecodedTextRuns(runs, decodedProsePolicy);
+}
+
 function astroSourceSentinel(source: string, label: string): string | null {
   const parsed = parseAstro(source, { position: true });
   if (parsed.diagnostics.some((diagnostic) => diagnostic.severity === 1)) {
     throw new Error(`${label} contains invalid Astro syntax`);
   }
-  let found: string | null = null;
+  let found: string | null = astroRenderedTextSentinel(parsed.ast);
   const scanScript = (value: string, suffix: string) => {
     if (!found) found = scriptSourceSentinel(value, `${label}${suffix}.tsx`);
   };
@@ -1057,10 +1193,20 @@ function astroSourceSentinel(source: string, label: string): string | null {
       if (node.type === 'element') {
         const elementName = node.name.toLowerCase();
         if (elementName === 'script') {
-          scanScript(
-            node.children.map((child) => child.type === 'text' ? child.value : '').join(''),
-            '.script',
-          );
+          const scriptSource = node.children
+            .map((child) => child.type === 'text' ? child.value : '')
+            .join('');
+          const type = node.attributes.find((attribute) =>
+            attribute.name.toLowerCase() === 'type'
+              && (attribute.kind === 'quoted' || attribute.kind === 'empty'))?.value ?? null;
+          const kind = builtScriptPayloadKind(type);
+          if (kind === 'json') {
+            found = jsonSourceSentinel(scriptSource, `${label}.script.json`) ?? found;
+          } else if (kind === 'javascript') {
+            scanScript(scriptSource, '.script');
+          } else {
+            found = decodedFragmentSentinel(scriptSource) ?? found;
+          }
           return;
         }
         if (elementName === 'style') return;
@@ -1537,12 +1683,23 @@ function rootPath(input: string | URL): string {
 async function pathMetadata(path: string) {
   let metadata;
   try {
-    metadata = await lstat(path);
+    metadata = await lstat(path, { bigint: true });
   } catch (error) {
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return null;
     throw error;
   }
   return metadata;
+}
+
+type ReleaseFileMetadata = NonNullable<Awaited<ReturnType<typeof pathMetadata>>>;
+
+function sameReleaseFileMetadata(left: ReleaseFileMetadata, right: ReleaseFileMetadata): boolean {
+  return left.dev === right.dev
+    && left.ino === right.ino
+    && left.nlink === right.nlink
+    && left.size === right.size
+    && left.mtimeNs === right.mtimeNs
+    && left.ctimeNs === right.ctimeNs;
 }
 
 async function readSingleLinkReleaseFile(
@@ -1551,25 +1708,45 @@ async function readSingleLinkReleaseFile(
   expected: NonNullable<Awaited<ReturnType<typeof pathMetadata>>>,
 ): Promise<Buffer> {
   if (!expected.isFile()) throw new Error(`release-layer scan requires regular files: ${relativePath}`);
-  if (expected.nlink !== 1) {
+  if (expected.nlink !== 1n) {
     throw new Error(`release-layer scan rejects files with multiple hard links: ${relativePath}`);
+  }
+  if (expected.size > BigInt(maxReleaseFileBytes)) {
+    throw new Error(`release-layer file exceeds the bounded input size: ${relativePath}`);
   }
   const handle = await open(path, fileConstants.O_RDONLY | fileConstants.O_NOFOLLOW);
   try {
-    const opened = await handle.stat();
+    const opened = await handle.stat({ bigint: true });
     if (!opened.isFile()
-      || opened.nlink !== 1
-      || opened.dev !== expected.dev
-      || opened.ino !== expected.ino) {
+      || opened.nlink !== 1n
+      || !sameReleaseFileMetadata(opened, expected)) {
       throw new Error(`release-layer file identity changed or has multiple hard links: ${relativePath}`);
     }
-    const bytes = await handle.readFile();
-    const verified = await handle.stat();
+    if (opened.size > BigInt(maxReleaseFileBytes)) {
+      throw new Error(`release-layer file exceeds the bounded input size: ${relativePath}`);
+    }
+    const expectedByteLength = Number(opened.size);
+    const bytes = Buffer.allocUnsafe(expectedByteLength);
+    let offset = 0;
+    while (offset < expectedByteLength) {
+      const { bytesRead } = await handle.read(bytes, offset, expectedByteLength - offset, offset);
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+    if (offset !== expectedByteLength) {
+      throw new Error(`release-layer file size changed while reading: ${relativePath}`);
+    }
+    const overflow = Buffer.allocUnsafe(1);
+    const { bytesRead: overflowBytes } = await handle.read(overflow, 0, 1, expectedByteLength);
+    if (overflowBytes !== 0) {
+      throw new Error(`release-layer file size changed while reading: ${relativePath}`);
+    }
+    const verified = await handle.stat({ bigint: true });
     if (!verified.isFile()
-      || verified.nlink !== 1
-      || verified.dev !== opened.dev
-      || verified.ino !== opened.ino) {
-      throw new Error(`release-layer file identity changed or has multiple hard links: ${relativePath}`);
+      || verified.nlink !== 1n
+      || !sameReleaseFileMetadata(verified, opened)
+      || BigInt(bytes.length) !== verified.size) {
+      throw new Error(`release-layer file identity or metadata changed while reading: ${relativePath}`);
     }
     return bytes;
   } finally {
@@ -1632,10 +1809,30 @@ function assertBuiltReaderUrlSafe(value: string, relativePath: string): void {
   if (/[\u0000-\u001f\u007f-\u009f\s]/u.test(canonical) || canonical.includes('\\')) {
     throw new Error(`${relativePath} contains an unsafe reader-facing URL`);
   }
-  const sentinel = privateSentinel(canonical);
-  if (sentinel) throw new Error(`${relativePath} contains a forbidden private URL sentinel (${sentinel})`);
   if (/^(?:data|file|javascript|vbscript):/iu.test(canonical) || canonical.startsWith('//')) {
     throw new Error(`${relativePath} contains an unsafe reader-facing URL scheme`);
+  }
+  if (!canonical.startsWith('/')
+    && !canonical.startsWith('#')
+    && !canonical.startsWith('?')
+    && !/^[a-z][a-z0-9+.-]*:/iu.test(canonical)) {
+    const readerRelativePath = relativePath.startsWith(`${builtReaderRoot}/`)
+      ? relativePath.slice(builtReaderRoot.length + 1)
+      : relativePath;
+    const baseSegments = readerRelativePath.split('/');
+    baseSegments.pop();
+    const destination = canonical.split(/[?#]/u, 1)[0]!;
+    for (const segment of destination.split('/')) {
+      if (!segment || segment === '.') continue;
+      if (segment === '..') {
+        if (baseSegments.length === 0) {
+          throw new Error(`${relativePath} contains a relative URL escaping the reader root`);
+        }
+        baseSegments.pop();
+      } else {
+        baseSegments.push(segment);
+      }
+    }
   }
 }
 
@@ -1766,6 +1963,39 @@ function builtScriptPayloadKind(type: string | null): BuiltScriptPayloadKind {
 }
 
 function jsonSourceSentinel(source: string, label: string): string | null {
+  const sourceFile = tsCompiler.createSourceFile(
+    label,
+    source,
+    tsCompiler.ScriptTarget.Latest,
+    true,
+    tsCompiler.ScriptKind.JSON,
+  );
+  const parseDiagnostics = (sourceFile as typeof sourceFile & {
+    parseDiagnostics?: readonly import('typescript').Diagnostic[];
+  }).parseDiagnostics;
+  if (parseDiagnostics && parseDiagnostics.length > 0) {
+    throw new Error(`${label} contains invalid JSON`);
+  }
+  let duplicateKey = false;
+  let astNodes = 0;
+  const visit = (node: import('typescript').Node): void => {
+    astNodes += 1;
+    if (astNodes > 100_000) throw new Error(`${label} exceeds the structured-data node bound`);
+    if (tsCompiler.isObjectLiteralExpression(node)) {
+      const keys = new Set<string>();
+      for (const property of node.properties) {
+        if (!tsCompiler.isPropertyAssignment(property)
+          || !tsCompiler.isStringLiteralLike(property.name)) {
+          throw new Error(`${label} contains invalid JSON object syntax`);
+        }
+        if (keys.has(property.name.text)) duplicateKey = true;
+        keys.add(property.name.text);
+      }
+    }
+    tsCompiler.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  if (duplicateKey) return 'duplicate JSON object key';
   let value: unknown;
   try {
     value = JSON.parse(source);

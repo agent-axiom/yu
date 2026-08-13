@@ -1,4 +1,4 @@
-import { link, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { link, mkdir, mkdtemp, open, rm, truncate, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -375,6 +375,46 @@ describe('release-layer sentinel scan', () => {
     }
   });
 
+  it('rejects a release file modified after its bytes are read', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-race-'));
+    const path = join(root, 'src/pages/book/index.astro');
+    await writeLayerFile(root, 'src/pages/book/index.astro', '<main>Jade</main>');
+    const probe = await open(path, 'r');
+    type ReadMethod = (...args: never[]) => Promise<{ bytesRead: number; buffer: unknown }>;
+    const prototype = Object.getPrototypeOf(probe) as { read: ReadMethod };
+    const originalRead = prototype.read;
+    await probe.close();
+    let mutated = false;
+    prototype.read = async function patchedRead(...args: never[]) {
+      const result = await originalRead.apply(this, args);
+      if (!mutated && result.bytesRead > 0) {
+        mutated = true;
+        await writeFile(path, '<main>Ruby</main>');
+      }
+      return result;
+    };
+    try {
+      await expect(scanReaderReleaseLayers(root)).rejects.toThrow(
+        /changed|modified|identity|metadata|race|size/iu,
+      );
+    } finally {
+      prototype.read = originalRead;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects an oversized release file before allocating its contents', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-size-bound-'));
+    try {
+      const path = join(root, 'dist/book/oversized.webp');
+      await writeLayerFile(root, 'dist/book/oversized.webp', 'Jade');
+      await truncate(path, (64 * 1024 * 1024) + 1);
+      await expect(scanReaderReleaseLayers(root)).rejects.toThrow(/size|bound|large/iu);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('accepts neutral public structural IDs in runtime source layers', async () => {
     const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-runtime-public-id-'));
     try {
@@ -416,6 +456,133 @@ describe('release-layer sentinel scan', () => {
         '<a href="https://example.org/jade?repo=agent-axiom%252Fyu-book">Источник</a>',
       );
       await expect(scanReaderReleaseLayers(root)).rejects.toThrow(/private|sentinel|index\.html/iu);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    '../../outside/',
+    '%2e%2e/%2e%2e/outside/',
+  ])('rejects a built relative URL that escapes the reader root: %s', async (url) => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-dist-url-escape-'));
+    try {
+      await writeLayerFile(root, 'dist/book/index.html', `<a href="${url}">Outside</a>`);
+      await expect(scanReaderReleaseLayers(root)).rejects.toThrow(/outside|escape|relative|URL|index\.html/iu);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['same directory', 'dist/book/index.html', './chapter/'],
+    ['nested sibling', 'dist/book/chapters/current/index.html', '../sibling/'],
+    ['public fragment', 'dist/book/index.html', '#source-museum'],
+  ])('allows safe %s navigation inside the reader root', async (_label, path, url) => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-dist-url-relative-safe-'));
+    try {
+      await writeLayerFile(root, path, `<a href="${url}">Jade</a>`);
+      await expect(scanReaderReleaseLayers(root)).resolves.toBeUndefined();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    [
+      'runtime JavaScript',
+      'src/pages/book/traversal.ts',
+      'const path = "C:%2Fsafe%5C..%2F..%5CUsers%2Freader%2Fprivate.md";',
+    ],
+    [
+      'runtime JSON',
+      'src/lib/book-release/traversal.json',
+      '{"path":"C:%2Fsafe%5C..%2F..%5CUsers%2Freader%2Fprivate.md"}',
+    ],
+    [
+      'runtime CSS',
+      'src/styles/book.css',
+      '.jade::before{content:"C:%2Fsafe%5C..%2F..%5CUsers%2Freader%2Fprivate.md"}',
+    ],
+    [
+      'runtime Astro prose',
+      'src/pages/book/traversal.astro',
+      '<main>C:%2Fsafe%5C..%2F..%5CUsers%2Freader%2Fprivate.md</main>',
+    ],
+    [
+      'prefixed built HTML prose',
+      'dist/book/index.html',
+      '<main>See C:%2Fsafe%5C..%2F..%5CUsers%2Freader%2Fprivate.md</main>',
+    ],
+  ])('rejects a rooted path concealed by traversal in %s', async (_label, path, contents) => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-rooted-traversal-'));
+    try {
+      await writeLayerFile(root, path, contents);
+      await expect(scanReaderReleaseLayers(root)).rejects.toThrow(
+        /private|path|sentinel|traversal|canonical/iu,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    [
+      'Astro inline prose',
+      'src/pages/book/index.astro',
+      '<main>claim-<em>secret</em></main>',
+    ],
+    [
+      'built JSX inline prose',
+      'dist/book/runtime.jsx',
+      'const value = <span>java<em>script:alert(1)</em></span>;',
+    ],
+  ])('rejects a sentinel reconstructed from %s', async (_label, path, contents) => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-source-inline-run-'));
+    try {
+      await writeLayerFile(root, path, contents);
+      await expect(scanReaderReleaseLayers(root)).rejects.toThrow(/private|scheme|sentinel|path/iu);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    [
+      'Astro block prose',
+      'src/pages/book/index.astro',
+      '<main><p>claim-</p><p>secret</p></main>',
+    ],
+    [
+      'built JSX block prose',
+      'dist/book/runtime.jsx',
+      'const value = <div><p>java</p><p>script: ordinary prose</p></div>;',
+    ],
+    [
+      'Astro template boundary',
+      'src/pages/book/index.astro',
+      '<main>java<template></template>script: ordinary prose</main>',
+    ],
+    [
+      'built JSX template boundary',
+      'dist/book/runtime.jsx',
+      'const value = <span>java<template></template>script: ordinary prose</span>;',
+    ],
+    [
+      'Astro line break',
+      'src/pages/book/index.astro',
+      '<main>java<br>script: ordinary prose</main>',
+    ],
+    [
+      'built JSX line break',
+      'dist/book/runtime.jsx',
+      'const value = <span>java<br />script: ordinary prose</span>;',
+    ],
+  ])('keeps a real block boundary between %s runs', async (_label, path, contents) => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-source-block-run-'));
+    try {
+      await writeLayerFile(root, path, contents);
+      await expect(scanReaderReleaseLayers(root)).resolves.toBeUndefined();
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -637,6 +804,22 @@ describe('release-layer sentinel scan', () => {
     }
   });
 
+  it('allows safe JSON-LD in a runtime Astro script', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-astro-json-safe-'));
+    try {
+      await writeLayerFile(
+        root,
+        'src/pages/book/index.astro',
+        '<script type="application/ld+json">'
+          + '{"name":"Jade","data":{"file":"catalogue"}}'
+          + '</script><main>Jade</main>',
+      );
+      await expect(scanReaderReleaseLayers(root)).resolves.toBeUndefined();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     [
       'Unicode-escaped scheme',
@@ -673,6 +856,39 @@ describe('release-layer sentinel scan', () => {
       await expect(scanReaderReleaseLayers(root)).rejects.toThrow(
         /JSON|scheme|URL|Unicode|control|index\.html/iu,
       );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    [
+      'built JSON-LD with an overwritten unsafe value',
+      'dist/book/index.html',
+      '<script type="application/ld+json">'
+        + '{"url":"javascript:alert(1)","url":"https://example.org"}'
+        + '</script><main>Jade</main>',
+    ],
+    [
+      'standalone built JSON with equal safe keys',
+      'dist/book/catalogue.json',
+      '{"name":"Jade","name":"Nephrite"}',
+    ],
+    [
+      'runtime JSON with decoded-equivalent keys',
+      'src/lib/book-release/catalogue.json',
+      '{"url":"https://example.org","\\u0075rl":"https://museum.example"}',
+    ],
+    [
+      'runtime Astro JSON-LD with equal safe keys',
+      'src/pages/book/index.astro',
+      '<script type="application/ld+json">{"name":"Jade","name":"Nephrite"}</script><main>Jade</main>',
+    ],
+  ])('rejects duplicate object keys in %s', async (_label, path, contents) => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-json-duplicate-'));
+    try {
+      await writeLayerFile(root, path, contents);
+      await expect(scanReaderReleaseLayers(root)).rejects.toThrow(/duplicate|JSON|structured|key/iu);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
