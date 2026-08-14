@@ -23,9 +23,8 @@ import {
   type RawReaderReleaseFile,
 } from './integrity';
 import { buildReaderRouteIndex, type ReaderRouteIndex } from './routes';
+import { parseStrictUtf8Json } from './strict-json';
 import { validateReaderReleaseGraph } from './validate';
-
-const strictUtf8 = new TextDecoder('utf-8', { fatal: true });
 
 export type LoadedReaderEntry = {
   data: ReaderEntry;
@@ -102,11 +101,7 @@ async function readStableManifest(path: string): Promise<Buffer> {
 }
 
 function parseJson(bytes: Uint8Array, path: string): unknown {
-  try {
-    return JSON.parse(Buffer.from(bytes).toString('utf8'));
-  } catch (error) {
-    throw new Error(`invalid reader JSON in ${path}`, { cause: error });
-  }
+  return parseStrictUtf8Json(bytes, `reader JSON in ${path}`);
 }
 
 function assertRecordFileId(path: string, id: string): void {
@@ -155,15 +150,7 @@ export async function loadValidatedReaderRelease(root: string | URL): Promise<Lo
   }
 
   const manifestBytes = await readStableManifest(manifestPath);
-  let manifestJson: unknown;
-  try {
-    manifestJson = JSON.parse(strictUtf8.decode(manifestBytes));
-  } catch (error) {
-    if (error instanceof TypeError) {
-      throw new Error('reader release manifest is not valid UTF-8 text', { cause: error });
-    }
-    throw new Error('reader release manifest is not valid JSON', { cause: error });
-  }
+  const manifestJson = parseStrictUtf8Json(manifestBytes, 'reader release manifest');
   const manifest = readerReleaseManifestSchema.parse(manifestJson);
   const files = await verifyReaderReleaseIntegrity(projectRoot, manifest);
   const entries = files

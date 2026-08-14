@@ -93,22 +93,34 @@ const bookEntries = defineCollection({
 });
 
 const bookNotes = defineCollection({
-  loader: withImmutableReaderCollection(glob({ pattern: '*.json', base: './src/content/book-release/notes' })),
+  loader: withImmutableReaderCollection(
+    glob({ pattern: '*.json', base: './src/content/book-release/notes' }),
+    'notes',
+  ),
   schema: readerNoteSchema,
 });
 
 const bookSources = defineCollection({
-  loader: withImmutableReaderCollection(glob({ pattern: '*.json', base: './src/content/book-release/sources' })),
+  loader: withImmutableReaderCollection(
+    glob({ pattern: '*.json', base: './src/content/book-release/sources' }),
+    'sources',
+  ),
   schema: readerSourceSchema,
 });
 
 const bookObjects = defineCollection({
-  loader: withImmutableReaderCollection(glob({ pattern: '*.json', base: './src/content/book-release/objects' })),
+  loader: withImmutableReaderCollection(
+    glob({ pattern: '*.json', base: './src/content/book-release/objects' }),
+    'objects',
+  ),
   schema: readerObjectSchema,
 });
 
 const bookMedia = defineCollection({
-  loader: withImmutableReaderCollection(glob({ pattern: '*.json', base: './src/content/book-release/media' })),
+  loader: withImmutableReaderCollection(
+    glob({ pattern: '*.json', base: './src/content/book-release/media' }),
+    'media',
+  ),
   schema: readerMediaSchema,
 });
 

@@ -314,6 +314,21 @@ async function rebindManifest(root: string, mutate?: (manifest: JsonObject) => v
   return writeBoundManifest(root, manifest);
 }
 
+async function injectHiddenDuplicateJsonValue(
+  path: string,
+  key: string,
+  safeValue: string,
+  hiddenValue: string,
+  escapedKey: string,
+  indentation = '  ',
+): Promise<void> {
+  const raw = await readFile(path, 'utf8');
+  const safeLine = `${indentation}${JSON.stringify(key)}: ${JSON.stringify(safeValue)}`;
+  if (!raw.includes(safeLine)) throw new Error(`fixture key not found: ${key}`);
+  const duplicateLine = `${indentation}"${escapedKey}": ${JSON.stringify(hiddenValue)},\n${safeLine}`;
+  await writeFile(path, raw.replace(safeLine, duplicateLine));
+}
+
 async function createSyntheticRelease(): Promise<SyntheticRelease> {
   const root = await mkdtemp(join(tmpdir(), 'yu-reader-release-'));
   const payloads = new Map<string, string | Uint8Array>([
@@ -642,6 +657,79 @@ describe('validated reader release loading', () => {
       bytes[offset + 2] = 0xff;
       await writeFile(release.manifestPath, bytes);
       await expect(loadValidatedReaderRelease(release.root)).rejects.toThrow(/UTF-8|encoding/iu);
+    });
+  });
+
+  it('rejects an escaped-equivalent duplicate manifest key with a hidden forbidden first value', async () => {
+    await withRelease(async (release) => {
+      await injectHiddenDuplicateJsonValue(
+        release.manifestPath,
+        'projection',
+        'reader-v1',
+        'private-v1',
+        String.raw`\u0070rojection`,
+      );
+      await expect(loadValidatedReaderRelease(release.root)).rejects.toThrow(/duplicate|JSON|key/iu);
+    });
+  });
+
+  it.each([
+    [
+      'note',
+      'src/content/book-release/notes/note-prologue.json',
+      'confidence',
+      'high',
+      'private',
+      String.raw`\u0063onfidence`,
+      '  ',
+    ],
+    [
+      'source',
+      'src/content/book-release/sources/source-museum.json',
+      'url',
+      'https://museum.example/objects/jade',
+      'file:///Users/reader/private.md',
+      String.raw`\u0075rl`,
+      '  ',
+    ],
+    [
+      'object nested inventory',
+      'src/content/book-release/objects/object-jade-suit.json',
+      'status',
+      'published',
+      'private',
+      String.raw`\u0073tatus`,
+      '    ',
+    ],
+    [
+      'media',
+      'src/content/book-release/media/media-jade-suit.json',
+      'sourceUrl',
+      'https://museum.example/images/jade-suit',
+      'javascript:alert(1)',
+      String.raw`\u0073ourceUrl`,
+      '  ',
+    ],
+  ] as const)('rejects a fully rebound %s record with a hidden duplicate key', async (
+    _label,
+    relativePath,
+    key,
+    safeValue,
+    hiddenValue,
+    escapedKey,
+    indentation,
+  ) => {
+    await withRelease(async (release) => {
+      await injectHiddenDuplicateJsonValue(
+        join(release.root, relativePath),
+        key,
+        safeValue,
+        hiddenValue,
+        escapedKey,
+        indentation,
+      );
+      await rebindManifest(release.root);
+      await expect(loadValidatedReaderRelease(release.root)).rejects.toThrow(/duplicate|JSON|key/iu);
     });
   });
 

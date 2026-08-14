@@ -13,6 +13,7 @@ import {
   computeReadingMinutes,
   publicAnchorSchema,
 } from './schemas';
+import { DuplicateJsonKeyError, parseStrictJsonText } from './strict-json';
 import type { LoadedReaderRelease } from './load';
 
 type MarkdownNode = {
@@ -2245,44 +2246,12 @@ function builtScriptPayloadKind(type: string | null): BuiltScriptPayloadKind {
 }
 
 function jsonSourceSentinel(source: string, label: string): string | null {
-  const sourceFile = tsCompiler.createSourceFile(
-    label,
-    source,
-    tsCompiler.ScriptTarget.Latest,
-    true,
-    tsCompiler.ScriptKind.JSON,
-  );
-  const parseDiagnostics = (sourceFile as typeof sourceFile & {
-    parseDiagnostics?: readonly import('typescript').Diagnostic[];
-  }).parseDiagnostics;
-  if (parseDiagnostics && parseDiagnostics.length > 0) {
-    throw new Error(`${label} contains invalid JSON`);
-  }
-  let duplicateKey = false;
-  let astNodes = 0;
-  const visit = (node: import('typescript').Node): void => {
-    astNodes += 1;
-    if (astNodes > 100_000) throw new Error(`${label} exceeds the structured-data node bound`);
-    if (tsCompiler.isObjectLiteralExpression(node)) {
-      const keys = new Set<string>();
-      for (const property of node.properties) {
-        if (!tsCompiler.isPropertyAssignment(property)
-          || !tsCompiler.isStringLiteralLike(property.name)) {
-          throw new Error(`${label} contains invalid JSON object syntax`);
-        }
-        if (keys.has(property.name.text)) duplicateKey = true;
-        keys.add(property.name.text);
-      }
-    }
-    tsCompiler.forEachChild(node, visit);
-  };
-  visit(sourceFile);
-  if (duplicateKey) return 'duplicate JSON object key';
   let value: unknown;
   try {
-    value = JSON.parse(source);
+    value = parseStrictJsonText(source, label);
   } catch (error) {
-    throw new Error(`${label} contains invalid JSON`, { cause: error });
+    if (error instanceof DuplicateJsonKeyError) return 'duplicate JSON object key';
+    throw error;
   }
   const pending: unknown[] = [value];
   let visited = 0;

@@ -1,9 +1,11 @@
-import { existsSync, readdirSync } from 'node:fs';
-import { isAbsolute, posix, relative } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { constants as fileConstants, existsSync, readdirSync } from 'node:fs';
+import { lstat, open, readdir } from 'node:fs/promises';
+import { isAbsolute, join, posix, relative } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { DataStore, Loader, LoaderContext } from 'astro/loaders';
 import { fromMarkdown } from 'mdast-util-from-markdown';
 import { z } from 'zod';
+import { parseStrictUtf8Json } from './strict-json';
 
 export const AGENT_REVIEW_DISCLOSURE =
   'Материал проверен независимой коллегией AI-агентов по источникам, хронологии, объектам и сравнительному методу. Это не человеческая научная рецензия, не медицинская консультация и не подтверждение прав на изображения.';
@@ -653,12 +655,157 @@ const releaseCollectionSpecs = [
   ['media', '.json'],
 ] as const;
 
+export type ReaderReleaseJsonScope = 'manifest' | 'notes' | 'sources' | 'objects' | 'media';
+
 function releaseRootUrl(context: LoaderContext): URL {
   return new URL('./src/content/book-release/', context.config.root);
 }
 
 function publicImageRootUrl(context: LoaderContext): URL {
   return new URL('./public/images/book-release/', context.config.root);
+}
+
+const maxRawReaderJsonBytes = 8 * 1024 * 1024;
+
+async function rawReaderJsonMetadata(path: URL) {
+  try {
+    return await lstat(path, { bigint: true });
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+type RawReaderJsonMetadata = NonNullable<Awaited<ReturnType<typeof rawReaderJsonMetadata>>>;
+
+function sameRawReaderJsonMetadata(
+  left: RawReaderJsonMetadata,
+  right: RawReaderJsonMetadata,
+): boolean {
+  return left.dev === right.dev
+    && left.ino === right.ino
+    && left.mode === right.mode
+    && left.nlink === right.nlink
+    && left.size === right.size
+    && left.mtimeNs === right.mtimeNs
+    && left.ctimeNs === right.ctimeNs;
+}
+
+function assertRawReaderJsonFile(
+  metadata: RawReaderJsonMetadata,
+  label: string,
+): void {
+  if (metadata.isSymbolicLink() || !metadata.isFile()) {
+    throw new Error(`generated reader JSON must be a regular non-symbolic-link file at ${label}`);
+  }
+  if (metadata.nlink !== 1n) {
+    throw new Error(`generated reader JSON rejects files with multiple hard links: ${label}`);
+  }
+  if (metadata.size > BigInt(maxRawReaderJsonBytes)) {
+    throw new Error(`generated reader JSON exceeds the bounded input size: ${label}`);
+  }
+}
+
+async function readStableRawReaderJson(path: URL): Promise<Buffer> {
+  const label = fileURLToPath(path);
+  const expected = await rawReaderJsonMetadata(path);
+  if (!expected) throw new Error(`generated reader JSON disappeared before reading: ${label}`);
+  assertRawReaderJsonFile(expected, label);
+
+  const handle = await open(path, fileConstants.O_RDONLY | fileConstants.O_NOFOLLOW);
+  try {
+    const opened = await handle.stat({ bigint: true });
+    assertRawReaderJsonFile(opened, label);
+    if (!sameRawReaderJsonMetadata(expected, opened)) {
+      throw new Error(`generated reader JSON identity or metadata changed before reading: ${label}`);
+    }
+
+    const expectedByteLength = Number(opened.size);
+    const bytes = Buffer.allocUnsafe(expectedByteLength);
+    let offset = 0;
+    while (offset < expectedByteLength) {
+      const { bytesRead } = await handle.read(bytes, offset, expectedByteLength - offset, offset);
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+    if (offset !== expectedByteLength) {
+      throw new Error(`generated reader JSON size changed while reading: ${label}`);
+    }
+    const overflow = Buffer.allocUnsafe(1);
+    const { bytesRead: overflowBytes } = await handle.read(overflow, 0, 1, expectedByteLength);
+    if (overflowBytes !== 0) {
+      throw new Error(`generated reader JSON size changed while reading: ${label}`);
+    }
+
+    const verified = await handle.stat({ bigint: true });
+    const current = await rawReaderJsonMetadata(path);
+    if (!verified.isFile()
+      || verified.nlink !== 1n
+      || !sameRawReaderJsonMetadata(opened, verified)
+      || BigInt(bytes.byteLength) !== verified.size
+      || !current
+      || !sameRawReaderJsonMetadata(opened, current)) {
+      throw new Error(`generated reader JSON identity or metadata changed while reading: ${label}`);
+    }
+    return bytes;
+  } finally {
+    await handle.close();
+  }
+}
+
+async function validateStrictReaderJsonScope(
+  context: LoaderContext,
+  scope: ReaderReleaseJsonScope,
+): Promise<void> {
+  const releaseRoot = releaseRootUrl(context);
+  if (scope === 'manifest') {
+    const path = new URL('manifest.json', releaseRoot);
+    if (await rawReaderJsonMetadata(path)) {
+      parseStrictUtf8Json(await readStableRawReaderJson(path), fileURLToPath(path));
+    }
+    return;
+  }
+  const directory = new URL(`${scope}/`, releaseRoot);
+  const expectedDirectory = await rawReaderJsonMetadata(directory);
+  if (!expectedDirectory) return;
+  const directoryLabel = fileURLToPath(directory);
+  if (expectedDirectory.isSymbolicLink() || !expectedDirectory.isDirectory()) {
+    throw new Error(`generated reader JSON collection must be a regular directory: ${directoryLabel}`);
+  }
+
+  const directoryHandle = await open(
+    directory,
+    fileConstants.O_RDONLY | fileConstants.O_NOFOLLOW | fileConstants.O_DIRECTORY,
+  );
+  try {
+    const openedDirectory = await directoryHandle.stat({ bigint: true });
+    if (!openedDirectory.isDirectory()
+      || !sameRawReaderJsonMetadata(expectedDirectory, openedDirectory)) {
+      throw new Error(`generated reader JSON collection changed before reading: ${directoryLabel}`);
+    }
+    const entries = await readdir(directory, { withFileTypes: true });
+    entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+    for (const entry of entries) {
+      if (entry.isSymbolicLink()) {
+        throw new Error(`generated reader JSON collection rejects symbolic link: ${entry.name}`);
+      }
+      if (!entry.isFile() || !entry.name.endsWith('.json')) {
+        throw new Error(`unexpected generated reader JSON collection entry: ${entry.name}`);
+      }
+      const path = pathToFileURL(join(directoryLabel, entry.name));
+      parseStrictUtf8Json(await readStableRawReaderJson(path), fileURLToPath(path));
+    }
+    const verifiedDirectory = await directoryHandle.stat({ bigint: true });
+    const currentDirectory = await rawReaderJsonMetadata(directory);
+    if (!verifiedDirectory.isDirectory()
+      || !sameRawReaderJsonMetadata(openedDirectory, verifiedDirectory)
+      || !currentDirectory
+      || !sameRawReaderJsonMetadata(openedDirectory, currentDirectory)) {
+      throw new Error(`generated reader JSON collection changed while reading: ${directoryLabel}`);
+    }
+  } finally {
+    await directoryHandle.close();
+  }
 }
 
 function directoryHasPayload(directory: URL): boolean {
@@ -842,7 +989,10 @@ function registerReaderInvalidation(context: LoaderContext): ReaderInvalidationR
   return { coordinator, target };
 }
 
-export function withImmutableReaderCollection(baseLoader: Loader): Loader {
+export function withImmutableReaderCollection(
+  baseLoader: Loader,
+  jsonScope?: ReaderReleaseJsonScope,
+): Loader {
   return {
     name: `immutable-reader:${baseLoader.name}`,
     async load(context) {
@@ -852,6 +1002,7 @@ export function withImmutableReaderCollection(baseLoader: Loader): Loader {
         if (invalidation?.coordinator.invalidated) {
           throw new Error(READER_RELEASE_RESTART_REQUIRED);
         }
+        if (jsonScope) await validateStrictReaderJsonScope(context, jsonScope);
         await baseLoader.load({ ...context, watcher: undefined });
         if (invalidation?.target.dirtyDuringLoad) {
           context.store.clear();
@@ -875,7 +1026,7 @@ export function withReaderManifestValidation(baseLoader: Loader): Loader {
       validateLoadedManifest(context);
     },
   };
-  return withImmutableReaderCollection(validatingLoader);
+  return withImmutableReaderCollection(validatingLoader, 'manifest');
 }
 
 export type ReaderEntry = z.infer<typeof readerEntrySchema>;

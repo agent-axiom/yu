@@ -1,4 +1,15 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+  link,
+  mkdtemp,
+  mkdir,
+  open,
+  readFile,
+  rm,
+  symlink,
+  truncate,
+  unlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -36,7 +47,10 @@ import {
 
 type LoaderFactories = {
   countReaderVisibleWords(markdown: string): number;
-  withImmutableReaderCollection(baseLoader: Loader): Loader;
+  withImmutableReaderCollection(
+    baseLoader: Loader,
+    jsonScope?: 'manifest' | 'notes' | 'sources' | 'objects' | 'media',
+  ): Loader;
   withReaderEntryValidation(baseLoader: Loader): Loader;
   withReaderManifestValidation(baseLoader: Loader): Loader;
   validateReaderReleaseCollectionSummary(input: unknown): unknown;
@@ -544,7 +558,216 @@ describe('production reader collection loaders', () => {
     const config = await readFile(join(process.cwd(), 'src/content.config.ts'), 'utf8');
     expect(config).toContain('withReaderEntryValidation(glob(');
     expect(config).toContain('withReaderManifestValidation(glob(');
-    expect(config.match(/withImmutableReaderCollection\(glob\(/gu)).toHaveLength(4);
+    expect(config.match(/withImmutableReaderCollection\(/gu)).toHaveLength(4);
+    for (const scope of ['notes', 'sources', 'objects', 'media']) {
+      expect(config).toContain(`base: './src/content/book-release/${scope}' }),\n    '${scope}',`);
+    }
+  });
+
+  it.each([
+    [
+      'manifest',
+      'manifest.json',
+      String.raw`{"projection":"private-v1","\u0070rojection":"reader-v1"}`,
+      validManifest,
+    ],
+    [
+      'notes',
+      'notes/note-001.json',
+      String.raw`{"id":"claim-private","\u0069d":"note-001"}`,
+      validNote,
+    ],
+    [
+      'sources',
+      'sources/source-henan-museum.json',
+      String.raw`{"url":"file:///Users/reader/private.md","\u0075rl":"https://museum.example/source"}`,
+      validSource,
+    ],
+    [
+      'objects',
+      'objects/object-han-jade-suit.json',
+      String.raw`{"inventory":{"status":"private","\u0073tatus":"published"}}`,
+      validObject,
+    ],
+    [
+      'media',
+      'media/media-han-jade-suit.json',
+      String.raw`{"sourceUrl":"javascript:alert(1)","\u0073ourceUrl":"https://museum.example/image"}`,
+      validDocumentaryMedia,
+    ],
+  ] as const)('rejects duplicate raw JSON keys before the parsed %s collection reaches Astro', async (
+    scope,
+    relativePath,
+    rawJson,
+    safeData,
+  ) => {
+    const factories = await loadFactories();
+    const tree = await createReleaseTree();
+    try {
+      await writeFile(join(tree.rootPath, 'src/content/book-release', relativePath), rawJson);
+      const baseLoader: Loader = {
+        name: `parsed-${scope}-loader`,
+        load: async ({ store }) => {
+          store.set({ id: scope === 'manifest' ? 'manifest' : safeData.id, data: safeData });
+        },
+      };
+      const wrapped = scope === 'manifest'
+        ? factories.withReaderManifestValidation(baseLoader)
+        : factories.withImmutableReaderCollection(baseLoader, scope);
+      await expect(wrapped.load(createLoaderContext(tree.root))).rejects.toThrow(/duplicate|JSON|key/iu);
+    } finally {
+      await rm(tree.rootPath, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['trailing comma', String.raw`{"id":"note-001",}`],
+    ['trailing token', String.raw`{"id":"note-001"} private`],
+    ['malformed object', String.raw`{"id":`],
+  ])('rejects %s in raw generated JSON before Astro stores parsed data', async (_label, rawJson) => {
+    const factories = await loadFactories();
+    const tree = await createReleaseTree();
+    try {
+      await writeFile(join(tree.rootPath, 'src/content/book-release/notes/note-001.json'), rawJson);
+      const baseLoader: Loader = {
+        name: 'parsed-note-loader',
+        load: async ({ store }) => { store.set({ id: validNote.id, data: validNote }); },
+      };
+      await expect(factories.withImmutableReaderCollection(baseLoader, 'notes')
+        .load(createLoaderContext(tree.root)))
+        .rejects.toThrow(/invalid|JSON|syntax|trailing/iu);
+    } finally {
+      await rm(tree.rootPath, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['manifest', 'manifest.json'],
+    ['notes', 'notes/note-001.json'],
+  ] as const)('rejects a duplicate-key raw %s JSON file reached through a symlink', async (
+    scope,
+    relativePath,
+  ) => {
+    const factories = await loadFactories();
+    const tree = await createReleaseTree();
+    try {
+      const releaseRoot = join(tree.rootPath, 'src/content/book-release');
+      const target = join(releaseRoot, relativePath);
+      const symlinkPayload = join(tree.rootPath, `${scope}-duplicate-target.json`);
+      await writeFile(symlinkPayload, String.raw`{"id":"claim-private","\u0069d":"safe-public-id"}`);
+      await unlink(target);
+      await symlink(symlinkPayload, target);
+      const baseLoader: Loader = {
+        name: `symlink-${scope}-loader`,
+        load: async ({ store }) => {
+          const data = scope === 'manifest' ? validManifest : validNote;
+          store.set({ id: scope === 'manifest' ? 'manifest' : validNote.id, data });
+        },
+      };
+      const wrapped = scope === 'manifest'
+        ? factories.withReaderManifestValidation(baseLoader)
+        : factories.withImmutableReaderCollection(baseLoader, 'notes');
+      await expect(wrapped.load(createLoaderContext(tree.root)))
+        .rejects.toThrow(/symbolic|symlink|regular file|link/iu);
+    } finally {
+      await rm(tree.rootPath, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a multiply linked raw JSON collection file', async () => {
+    const factories = await loadFactories();
+    const tree = await createReleaseTree();
+    try {
+      const target = join(tree.rootPath, 'src/content/book-release/notes/note-001.json');
+      await link(target, join(tree.rootPath, 'note-hardlink-alias.json'));
+      const baseLoader: Loader = {
+        name: 'hardlink-note-loader',
+        load: async ({ store }) => { store.set({ id: validNote.id, data: validNote }); },
+      };
+      await expect(factories.withImmutableReaderCollection(baseLoader, 'notes')
+        .load(createLoaderContext(tree.root)))
+        .rejects.toThrow(/hard link|multiple links|nlink|regular file/iu);
+    } finally {
+      await rm(tree.rootPath, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects an oversized raw JSON collection file before allocating it', async () => {
+    const factories = await loadFactories();
+    const tree = await createReleaseTree();
+    try {
+      const target = join(tree.rootPath, 'src/content/book-release/notes/note-001.json');
+      await truncate(target, (8 * 1024 * 1024) + 1);
+      const baseLoader: Loader = {
+        name: 'oversized-note-loader',
+        load: async ({ store }) => { store.set({ id: validNote.id, data: validNote }); },
+      };
+      await expect(factories.withImmutableReaderCollection(baseLoader, 'notes')
+        .load(createLoaderContext(tree.root)))
+        .rejects.toThrow(/size|bound|large/iu);
+    } finally {
+      await rm(tree.rootPath, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects raw JSON mutated while its bounded bytes are read', async () => {
+    const factories = await loadFactories();
+    const tree = await createReleaseTree();
+    const target = join(tree.rootPath, 'src/content/book-release/notes/note-001.json');
+    await writeFile(target, JSON.stringify(validNote));
+    const probe = await open(target, 'r');
+    type ReadMethod = (...args: never[]) => Promise<{ bytesRead: number; buffer: unknown }>;
+    const prototype = Object.getPrototypeOf(probe) as { read: ReadMethod };
+    const originalRead = prototype.read;
+    await probe.close();
+    let mutated = false;
+    prototype.read = async function patchedRead(...args: never[]) {
+      const result = await originalRead.apply(this, args);
+      if (!mutated && result.bytesRead > 0) {
+        mutated = true;
+        await writeFile(target, JSON.stringify({ ...validNote, confidence: 'medium' }));
+      }
+      return result;
+    };
+    try {
+      const baseLoader: Loader = {
+        name: 'mutating-note-loader',
+        load: async ({ store }) => { store.set({ id: validNote.id, data: validNote }); },
+      };
+      await expect(factories.withImmutableReaderCollection(baseLoader, 'notes')
+        .load(createLoaderContext(tree.root)))
+        .rejects.toThrow(/changed|identity|metadata|size|reading/iu);
+      expect(mutated).toBe(true);
+    } finally {
+      prototype.read = originalRead;
+      await rm(tree.rootPath, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['non-JSON file', 'README.txt', false],
+    ['nested directory', 'nested', true],
+  ] as const)('rejects an unexpected %s in a generated JSON collection', async (
+    _label,
+    name,
+    directory,
+  ) => {
+    const factories = await loadFactories();
+    const tree = await createReleaseTree();
+    try {
+      const path = join(tree.rootPath, 'src/content/book-release/notes', name);
+      if (directory) await mkdir(path);
+      else await writeFile(path, 'not a generated JSON record');
+      const baseLoader: Loader = {
+        name: 'unexpected-note-entry-loader',
+        load: async ({ store }) => { store.set({ id: validNote.id, data: validNote }); },
+      };
+      await expect(factories.withImmutableReaderCollection(baseLoader, 'notes')
+        .load(createLoaderContext(tree.root)))
+        .rejects.toThrow(/unexpected|JSON|entry|regular file/iu);
+    } finally {
+      await rm(tree.rootPath, { recursive: true, force: true });
+    }
   });
 
   it('rejects readingMinutes that disagree with a real Markdown body', async () => {
