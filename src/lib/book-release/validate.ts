@@ -1,5 +1,5 @@
 import { constants as fileConstants } from 'node:fs';
-import { lstat, open, readdir } from 'node:fs/promises';
+import { lstat, open, readdir, type FileHandle } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { join, relative, resolve, sep } from 'node:path';
@@ -867,6 +867,8 @@ const dangerousSchemePattern = new RegExp(
 );
 const strictUtf8 = new TextDecoder('utf-8', { fatal: true });
 const maxReleaseFileBytes = 64 * 1024 * 1024;
+const maxReleaseSnapshotBytes = 256 * 1024 * 1024;
+const maxReleaseSnapshotEntries = 100_000;
 const maxSrcdocDepth = 8;
 const maxCssSourceLength = 1_000_000;
 const maxCssNodes = 20_000;
@@ -1696,34 +1698,135 @@ type ReleaseFileMetadata = NonNullable<Awaited<ReturnType<typeof pathMetadata>>>
 function sameReleaseFileMetadata(left: ReleaseFileMetadata, right: ReleaseFileMetadata): boolean {
   return left.dev === right.dev
     && left.ino === right.ino
+    && left.mode === right.mode
     && left.nlink === right.nlink
     && left.size === right.size
     && left.mtimeNs === right.mtimeNs
     && left.ctimeNs === right.ctimeNs;
 }
 
+type ReleaseSnapshotLayer = 'guard' | 'runtime' | 'built';
+
+type ReleaseSnapshotEntry = {
+  readonly absolutePath: string;
+  readonly relativePath: string;
+  readonly layer: ReleaseSnapshotLayer;
+  readonly kind: 'missing' | 'directory' | 'file';
+  readonly metadata: ReleaseFileMetadata | null;
+  readonly bytes?: Buffer;
+};
+
+type ReleaseSnapshot = {
+  readonly entries: readonly ReleaseSnapshotEntry[];
+  readonly handles: readonly {
+    readonly relativePath: string;
+    readonly metadata: ReleaseFileMetadata;
+    readonly handle: FileHandle;
+  }[];
+};
+
+type ReleaseSnapshotCapture = {
+  readonly projectRoot: string;
+  readonly includeBytes: boolean;
+  readonly retainHandles: boolean;
+  readonly entries: ReleaseSnapshotEntry[];
+  readonly handles: { relativePath: string; metadata: ReleaseFileMetadata; handle: FileHandle }[];
+  readonly seen: Set<string>;
+  totalBytes: bigint;
+};
+
+type ReleaseSnapshotScope = {
+  readonly relativePath: string;
+  readonly layer: ReleaseSnapshotLayer;
+  readonly recursive: boolean;
+  readonly directoryGuard: boolean;
+};
+
+export type ReaderReleaseScanOptions = {
+  /** Audit/test instrumentation. The complete immutable snapshot is revalidated before success. */
+  readonly afterEntryScan?: (relativePath: string) => void | Promise<void>;
+};
+
+function normalizedReleaseRelativePath(projectRoot: string, path: string): string {
+  return relative(projectRoot, path).split(sep).join('/') || '.';
+}
+
+function compareReleasePaths(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function releaseSnapshotScopes(): readonly ReleaseSnapshotScope[] {
+  const semanticScopes: ReleaseSnapshotScope[] = [
+    ...runtimeScanRoots.map((relativePath) => ({
+      relativePath,
+      layer: 'runtime' as const,
+      recursive: true,
+      directoryGuard: false,
+    })),
+    {
+      relativePath: builtReaderRoot,
+      layer: 'built',
+      recursive: true,
+      directoryGuard: false,
+    },
+  ];
+  const semanticPaths = new Set(semanticScopes.map(({ relativePath }) => relativePath));
+  const guardPaths = new Set<string>(['.']);
+  for (const { relativePath } of semanticScopes) {
+    const segments = relativePath.split('/');
+    for (let length = 1; length < segments.length; length += 1) {
+      guardPaths.add(segments.slice(0, length).join('/'));
+    }
+  }
+  const guards = [...guardPaths]
+    .filter((relativePath) => !semanticPaths.has(relativePath))
+    .sort((left, right) => {
+      const depth = left.split('/').length - right.split('/').length;
+      return depth || compareReleasePaths(left, right);
+    })
+    .map((relativePath): ReleaseSnapshotScope => ({
+      relativePath,
+      layer: 'guard',
+      recursive: false,
+      directoryGuard: true,
+    }));
+  return [...guards, ...semanticScopes];
+}
+
+function releaseSnapshotChanged(relativePath: string): Error {
+  return new Error(`release-layer snapshot tree identity or metadata changed: ${relativePath}`);
+}
+
+function assertReleaseFileMetadata(
+  metadata: ReleaseFileMetadata,
+  relativePath: string,
+): void {
+  if (!metadata.isFile()) throw new Error(`release-layer scan requires regular files: ${relativePath}`);
+  if (metadata.nlink !== 1n) {
+    throw new Error(`release-layer scan rejects files with multiple hard links: ${relativePath}`);
+  }
+  if (metadata.size > BigInt(maxReleaseFileBytes)) {
+    throw new Error(`release-layer file exceeds the bounded input size: ${relativePath}`);
+  }
+}
+
 async function readSingleLinkReleaseFile(
   path: string,
   relativePath: string,
-  expected: NonNullable<Awaited<ReturnType<typeof pathMetadata>>>,
-): Promise<Buffer> {
-  if (!expected.isFile()) throw new Error(`release-layer scan requires regular files: ${relativePath}`);
-  if (expected.nlink !== 1n) {
-    throw new Error(`release-layer scan rejects files with multiple hard links: ${relativePath}`);
-  }
-  if (expected.size > BigInt(maxReleaseFileBytes)) {
-    throw new Error(`release-layer file exceeds the bounded input size: ${relativePath}`);
-  }
+  expected: ReleaseFileMetadata,
+  remainingSnapshotBytes: bigint,
+): Promise<{ readonly bytes: Buffer; readonly metadata: ReleaseFileMetadata; readonly handle: FileHandle }> {
+  assertReleaseFileMetadata(expected, relativePath);
   const handle = await open(path, fileConstants.O_RDONLY | fileConstants.O_NOFOLLOW);
+  let retained = false;
   try {
     const opened = await handle.stat({ bigint: true });
-    if (!opened.isFile()
-      || opened.nlink !== 1n
-      || !sameReleaseFileMetadata(opened, expected)) {
+    assertReleaseFileMetadata(opened, relativePath);
+    if (!sameReleaseFileMetadata(opened, expected)) {
       throw new Error(`release-layer file identity changed or has multiple hard links: ${relativePath}`);
     }
-    if (opened.size > BigInt(maxReleaseFileBytes)) {
-      throw new Error(`release-layer file exceeds the bounded input size: ${relativePath}`);
+    if (opened.size > remainingSnapshotBytes) {
+      throw new Error(`release-layer snapshot exceeds the bounded total input size: ${relativePath}`);
     }
     const expectedByteLength = Number(opened.size);
     const bytes = Buffer.allocUnsafe(expectedByteLength);
@@ -1748,24 +1851,203 @@ async function readSingleLinkReleaseFile(
       || BigInt(bytes.length) !== verified.size) {
       throw new Error(`release-layer file identity or metadata changed while reading: ${relativePath}`);
     }
-    return bytes;
+    const current = await pathMetadata(path);
+    if (!current || !sameReleaseFileMetadata(current, opened)) {
+      throw releaseSnapshotChanged(relativePath);
+    }
+    retained = true;
+    return { bytes, metadata: opened, handle };
   } finally {
-    await handle.close();
+    if (!retained) await handle.close();
   }
 }
 
-async function scanRuntimePath(projectRoot: string, path: string): Promise<void> {
-  const relativePath = relative(projectRoot, path).split(sep).join('/');
+function appendSnapshotEntry(capture: ReleaseSnapshotCapture, entry: ReleaseSnapshotEntry): void {
+  if (capture.seen.has(entry.relativePath)) {
+    throw new Error(`release-layer snapshot contains a duplicate manifest path: ${entry.relativePath}`);
+  }
+  if (capture.entries.length >= maxReleaseSnapshotEntries) {
+    throw new Error(`release-layer snapshot exceeds the bounded manifest entry count: ${entry.relativePath}`);
+  }
+  capture.seen.add(entry.relativePath);
+  capture.entries.push(entry);
+}
+
+async function captureReleasePath(
+  capture: ReleaseSnapshotCapture,
+  scope: ReleaseSnapshotScope,
+  absolutePath: string,
+): Promise<void> {
+  const relativePath = normalizedReleaseRelativePath(capture.projectRoot, absolutePath);
   assertReleasePathSafe(relativePath);
-  const metadata = await pathMetadata(path);
-  if (!metadata) return;
-  if (metadata.isSymbolicLink()) throw new Error(`release-layer scan rejects symbolic link: ${relativePath}`);
-  if (metadata.isDirectory()) {
-    const names = await readdir(path);
-    for (const name of names) await scanRuntimePath(projectRoot, join(path, name));
+  const metadata = await pathMetadata(absolutePath);
+  if (!metadata) {
+    appendSnapshotEntry(capture, {
+      absolutePath,
+      relativePath,
+      layer: scope.layer,
+      kind: 'missing',
+      metadata: null,
+    });
     return;
   }
-  const bytes = await readSingleLinkReleaseFile(path, relativePath, metadata);
+  if (metadata.isSymbolicLink()) throw new Error(`release-layer scan rejects symbolic link: ${relativePath}`);
+  if (metadata.isDirectory()) {
+    const handle = await open(
+      absolutePath,
+      fileConstants.O_RDONLY | fileConstants.O_NOFOLLOW | fileConstants.O_DIRECTORY,
+    );
+    let retained = false;
+    try {
+      const opened = await handle.stat({ bigint: true });
+      if (!opened.isDirectory() || !sameReleaseFileMetadata(opened, metadata)) {
+        throw releaseSnapshotChanged(relativePath);
+      }
+      appendSnapshotEntry(capture, {
+        absolutePath,
+        relativePath,
+        layer: scope.layer,
+        kind: 'directory',
+        metadata: opened,
+      });
+      if (scope.recursive) {
+        const names = await readdir(absolutePath);
+        names.sort(compareReleasePaths);
+        for (const name of names) {
+          await captureReleasePath(capture, scope, join(absolutePath, name));
+        }
+      }
+      const verified = await handle.stat({ bigint: true });
+      const current = await pathMetadata(absolutePath);
+      if (!verified.isDirectory()
+        || !sameReleaseFileMetadata(verified, opened)
+        || !current
+        || !sameReleaseFileMetadata(current, opened)) {
+        throw releaseSnapshotChanged(relativePath);
+      }
+      if (capture.retainHandles) {
+        capture.handles.push({ relativePath, metadata: opened, handle });
+        retained = true;
+      }
+    } finally {
+      if (!retained) await handle.close();
+    }
+    return;
+  }
+  if (scope.directoryGuard) {
+    throw new Error(`release-layer snapshot requires a directory guard: ${relativePath}`);
+  }
+  assertReleaseFileMetadata(metadata, relativePath);
+  if (!capture.includeBytes) {
+    const handle = await open(absolutePath, fileConstants.O_RDONLY | fileConstants.O_NOFOLLOW);
+    try {
+      const opened = await handle.stat({ bigint: true });
+      assertReleaseFileMetadata(opened, relativePath);
+      const current = await pathMetadata(absolutePath);
+      if (!sameReleaseFileMetadata(opened, metadata)
+        || !current
+        || !sameReleaseFileMetadata(current, opened)) {
+        throw releaseSnapshotChanged(relativePath);
+      }
+      appendSnapshotEntry(capture, {
+        absolutePath,
+        relativePath,
+        layer: scope.layer,
+        kind: 'file',
+        metadata: opened,
+      });
+    } finally {
+      await handle.close();
+    }
+    return;
+  }
+  const remainingSnapshotBytes = BigInt(maxReleaseSnapshotBytes) - capture.totalBytes;
+  const captured = await readSingleLinkReleaseFile(
+    absolutePath,
+    relativePath,
+    metadata,
+    remainingSnapshotBytes,
+  );
+  capture.totalBytes += captured.metadata.size;
+  if (capture.retainHandles) {
+    capture.handles.push({ relativePath, metadata: captured.metadata, handle: captured.handle });
+  }
+  try {
+    appendSnapshotEntry(capture, {
+      absolutePath,
+      relativePath,
+      layer: scope.layer,
+      kind: 'file',
+      metadata: captured.metadata,
+      bytes: captured.bytes,
+    });
+  } finally {
+    if (!capture.retainHandles) await captured.handle.close();
+  }
+}
+
+async function closeReleaseSnapshot(snapshot: ReleaseSnapshot): Promise<void> {
+  await Promise.all(snapshot.handles.map(async ({ handle }) => handle.close()));
+}
+
+async function captureReleaseSnapshot(
+  projectRoot: string,
+  includeBytes: boolean,
+  retainHandles: boolean,
+): Promise<ReleaseSnapshot> {
+  const capture: ReleaseSnapshotCapture = {
+    projectRoot,
+    includeBytes,
+    retainHandles,
+    entries: [],
+    handles: [],
+    seen: new Set(),
+    totalBytes: 0n,
+  };
+  try {
+    for (const scope of releaseSnapshotScopes()) {
+      const absolutePath = scope.relativePath === '.'
+        ? projectRoot
+        : join(projectRoot, ...scope.relativePath.split('/'));
+      await captureReleasePath(capture, scope, absolutePath);
+    }
+    capture.entries.sort((left, right) => compareReleasePaths(left.relativePath, right.relativePath));
+    return { entries: capture.entries, handles: capture.handles };
+  } catch (error) {
+    await Promise.all(capture.handles.map(async ({ handle }) => handle.close()));
+    throw error;
+  }
+}
+
+async function assertSnapshotHandlesUnchanged(snapshot: ReleaseSnapshot): Promise<void> {
+  for (const { relativePath, metadata, handle } of snapshot.handles) {
+    const current = await handle.stat({ bigint: true });
+    if (!sameReleaseFileMetadata(current, metadata)) throw releaseSnapshotChanged(relativePath);
+  }
+}
+
+function assertReleaseSnapshotsEqual(expected: ReleaseSnapshot, current: ReleaseSnapshot): void {
+  if (expected.entries.length !== current.entries.length) {
+    throw new Error('release-layer snapshot manifest tree changed (missing or extra entry)');
+  }
+  for (let index = 0; index < expected.entries.length; index += 1) {
+    const before = expected.entries[index]!;
+    const after = current.entries[index]!;
+    if (before.relativePath !== after.relativePath
+      || before.kind !== after.kind
+      || before.layer !== after.layer
+      || (before.metadata === null) !== (after.metadata === null)
+      || (before.metadata !== null
+        && after.metadata !== null
+        && !sameReleaseFileMetadata(before.metadata, after.metadata))) {
+      throw new Error(`release-layer snapshot manifest tree changed: ${before.relativePath}`);
+    }
+  }
+}
+
+function scanRuntimeSnapshotEntry(entry: ReleaseSnapshotEntry): void {
+  if (entry.kind !== 'file' || !entry.bytes) return;
+  const { bytes, relativePath } = entry;
   let contents: string;
   try {
     contents = runtimeTextExtensions.test(relativePath) ? strictUtf8.decode(bytes) : bytes.toString('utf8');
@@ -1812,26 +2094,26 @@ function assertBuiltReaderUrlSafe(value: string, relativePath: string): void {
   if (/^(?:data|file|javascript|vbscript):/iu.test(canonical) || canonical.startsWith('//')) {
     throw new Error(`${relativePath} contains an unsafe reader-facing URL scheme`);
   }
-  if (!canonical.startsWith('/')
-    && !canonical.startsWith('#')
-    && !canonical.startsWith('?')
-    && !/^[a-z][a-z0-9+.-]*:/iu.test(canonical)) {
-    const readerRelativePath = relativePath.startsWith(`${builtReaderRoot}/`)
-      ? relativePath.slice(builtReaderRoot.length + 1)
-      : relativePath;
-    const baseSegments = readerRelativePath.split('/');
-    baseSegments.pop();
-    const destination = canonical.split(/[?#]/u, 1)[0]!;
-    for (const segment of destination.split('/')) {
-      if (!segment || segment === '.') continue;
-      if (segment === '..') {
-        if (baseSegments.length === 0) {
-          throw new Error(`${relativePath} contains a relative URL escaping the reader root`);
-        }
-        baseSegments.pop();
-      } else {
-        baseSegments.push(segment);
+  if (value.startsWith('#') || value.startsWith('?')) return;
+  if (/^[a-z][a-z0-9+.-]*:/iu.test(value)) return;
+  const rawDestination = value.split(/[?#]/u, 1)[0]!;
+  const destination = canonicalSecurityValue(rawDestination);
+  const readerRelativePath = relativePath.startsWith(`${builtReaderRoot}/`)
+    ? relativePath.slice(builtReaderRoot.length + 1)
+    : relativePath;
+  const rootAnchoredPath = destination.startsWith('/') || destination.startsWith('~/');
+  const baseSegments = rootAnchoredPath ? [] : readerRelativePath.split('/');
+  if (!rootAnchoredPath) baseSegments.pop();
+  const pathDestination = destination.startsWith('~/') ? destination.slice(2) : destination;
+  for (const segment of pathDestination.split('/')) {
+    if (!segment || segment === '.') continue;
+    if (segment === '..') {
+      if (baseSegments.length === 0) {
+        throw new Error(`${relativePath} contains a relative URL escaping its allowed root`);
       }
+      baseSegments.pop();
+    } else {
+      baseSegments.push(segment);
     }
   }
 }
@@ -2217,18 +2499,9 @@ function scanBuiltReaderDocument(contents: string, relativePath: string, srcdocD
   }
 }
 
-async function scanBuiltPath(projectRoot: string, path: string): Promise<void> {
-  const relativePath = relative(projectRoot, path).split(sep).join('/');
-  assertReleasePathSafe(relativePath);
-  const metadata = await pathMetadata(path);
-  if (!metadata) return;
-  if (metadata.isSymbolicLink()) throw new Error(`release-layer scan rejects symbolic link: ${relativePath}`);
-  if (metadata.isDirectory()) {
-    const names = await readdir(path);
-    for (const name of names) await scanBuiltPath(projectRoot, join(path, name));
-    return;
-  }
-  const bytes = await readSingleLinkReleaseFile(path, relativePath, metadata);
+function scanBuiltSnapshotEntry(entry: ReleaseSnapshotEntry): void {
+  if (entry.kind !== 'file' || !entry.bytes) return;
+  const { bytes, relativePath } = entry;
   const context = artifactContext(relativePath, false);
   scanBuiltTextArtifact(bytes.toString('utf8'), relativePath, false, context);
   if (!builtTextExtensions.test(relativePath)) return;
@@ -2247,12 +2520,30 @@ async function scanBuiltPath(projectRoot: string, path: string): Promise<void> {
   }
 }
 
-export async function scanReaderReleaseLayers(root: string | URL): Promise<void> {
+export async function scanReaderReleaseLayers(
+  root: string | URL,
+  options: ReaderReleaseScanOptions = {},
+): Promise<void> {
   const projectRoot = rootPath(root);
-  for (const path of runtimeScanRoots) {
-    await scanRuntimePath(projectRoot, join(projectRoot, ...path.split('/')));
+  const snapshot = await captureReleaseSnapshot(projectRoot, true, true);
+  try {
+    for (const entry of snapshot.entries) {
+      if (entry.layer !== 'runtime' || entry.kind !== 'file') continue;
+      scanRuntimeSnapshotEntry(entry);
+      await options.afterEntryScan?.(entry.relativePath);
+    }
+    const { loadValidatedReaderRelease } = await import('./load');
+    await loadValidatedReaderRelease(projectRoot);
+    for (const entry of snapshot.entries) {
+      if (entry.layer !== 'built' || entry.kind !== 'file') continue;
+      scanBuiltSnapshotEntry(entry);
+      await options.afterEntryScan?.(entry.relativePath);
+    }
+    await assertSnapshotHandlesUnchanged(snapshot);
+    const current = await captureReleaseSnapshot(projectRoot, false, false);
+    assertReleaseSnapshotsEqual(snapshot, current);
+    await assertSnapshotHandlesUnchanged(snapshot);
+  } finally {
+    await closeReleaseSnapshot(snapshot);
   }
-  const { loadValidatedReaderRelease } = await import('./load');
-  await loadValidatedReaderRelease(projectRoot);
-  await scanBuiltPath(projectRoot, join(projectRoot, ...builtReaderRoot.split('/')));
 }

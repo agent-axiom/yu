@@ -1,4 +1,4 @@
-import { link, mkdir, mkdtemp, open, rm, truncate, writeFile } from 'node:fs/promises';
+import { link, mkdir, mkdtemp, open, rename, rm, truncate, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -415,6 +415,75 @@ describe('release-layer sentinel scan', () => {
     }
   });
 
+  it.each([
+    [
+      'runtime tree',
+      'src/pages/book/a.astro',
+      'src/pages/book/z.astro',
+    ],
+    [
+      'built tree',
+      'dist/book/a.html',
+      'dist/book/z.html',
+    ],
+  ])('rejects a file atomically replaced after its snapshot bytes are scanned in the %s', async (
+    _label,
+    target,
+    later,
+  ) => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-tree-file-swap-'));
+    try {
+      await writeLayerFile(root, target, '<main>Jade</main>');
+      await writeLayerFile(root, later, '<main>Nephrite</main>');
+      const replacement = join(root, '.scanner-fixtures', 'replacement');
+      await mkdir(dirname(replacement), { recursive: true });
+      await writeFile(replacement, '<main>claim-secret</main>');
+      let swapped = false;
+      await expect(scanReaderReleaseLayers(root, {
+        afterEntryScan: async (relativePath) => {
+          if (!swapped && relativePath === target) {
+            swapped = true;
+            await rename(replacement, join(root, target));
+          }
+        },
+      })).rejects.toThrow(/snapshot|manifest|tree|changed|identity|metadata/iu);
+      expect(swapped).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['runtime tree', 'src/pages/book', 'src/pages/book/a.astro'],
+    ['built tree', 'dist/book', 'dist/book/a.html'],
+  ])('rejects an atomic directory swap with an unlisted file in the %s', async (
+    _label,
+    scanRoot,
+    trigger,
+  ) => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-tree-directory-swap-'));
+    try {
+      await writeLayerFile(root, trigger, '<main>Jade</main>');
+      await writeLayerFile(root, `${scanRoot}/z.html`, '<main>Nephrite</main>');
+      const replacement = join(root, '.scanner-fixtures', 'replacement-tree');
+      await mkdir(replacement, { recursive: true });
+      await writeFile(join(replacement, 'zzz.html'), '<main>claim-secret</main>');
+      let swapped = false;
+      await expect(scanReaderReleaseLayers(root, {
+        afterEntryScan: async (relativePath) => {
+          if (!swapped && relativePath === trigger) {
+            swapped = true;
+            await rename(join(root, scanRoot), join(root, '.scanner-fixtures', 'original-tree'));
+            await rename(replacement, join(root, scanRoot));
+          }
+        },
+      })).rejects.toThrow(/snapshot|manifest|tree|changed|identity|metadata|unlisted|extra/iu);
+      expect(swapped).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('accepts neutral public structural IDs in runtime source layers', async () => {
     const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-runtime-public-id-'));
     try {
@@ -464,6 +533,13 @@ describe('release-layer sentinel scan', () => {
   it.each([
     '../../outside/',
     '%2e%2e/%2e%2e/outside/',
+    '/safe/../../Users/reader/private.md',
+    '/safe/%2e%2e/%2e%2e/Users/reader/private.md',
+    '~/safe/../../Users/reader/private.md',
+    '~/safe/../../outside/',
+    '/safe/../../outside/',
+    '/safe/%3F/../../../outside/',
+    '/safe/%23/../../../outside/',
   ])('rejects a built relative URL that escapes the reader root: %s', async (url) => {
     const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-dist-url-escape-'));
     try {
@@ -478,6 +554,9 @@ describe('release-layer sentinel scan', () => {
     ['same directory', 'dist/book/index.html', './chapter/'],
     ['nested sibling', 'dist/book/chapters/current/index.html', '../sibling/'],
     ['public fragment', 'dist/book/index.html', '#source-museum'],
+    ['rooted reader traversal', 'dist/book/index.html', '/book/chapter/../sources/'],
+    ['encoded reserved path segment', 'dist/book/index.html', '/safe/%3F/../../outside/'],
+    ['external HTTPS URL', 'dist/book/index.html', 'https://example.org/safe/../../outside/'],
   ])('allows safe %s navigation inside the reader root', async (_label, path, url) => {
     const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-dist-url-relative-safe-'));
     try {
