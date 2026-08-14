@@ -1,4 +1,4 @@
-import { lstat, readdir, readFile } from 'node:fs/promises';
+import { lstat, readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { basename, join, posix, resolve } from 'node:path';
 import { parseFrontmatter } from 'astro/markdown';
@@ -19,6 +19,7 @@ import {
 } from './schemas';
 import {
   recheckVerifiedReaderRelease,
+  readBoundedReaderReleaseFile,
   verifyReaderReleaseIntegrity,
   type RawReaderReleaseFile,
 } from './integrity';
@@ -76,28 +77,8 @@ async function containsAnyEntry(path: string, ignoredName?: string): Promise<boo
   return false;
 }
 
-async function assertManifestIsRegular(path: string) {
-  const metadata = await lstat(path);
-  if (!metadata.isFile() || metadata.isSymbolicLink()) {
-    throw new Error('reader release manifest must be a regular file');
-  }
-  if (metadata.nlink !== 1) throw new Error('reader release manifest must have exactly one hard link');
-  return metadata;
-}
-
 async function readStableManifest(path: string): Promise<Buffer> {
-  const before = await assertManifestIsRegular(path);
-  const bytes = await readFile(path);
-  const after = await assertManifestIsRegular(path);
-  if (before.dev !== after.dev
-    || before.ino !== after.ino
-    || before.size !== after.size
-    || before.mtimeMs !== after.mtimeMs
-    || before.ctimeMs !== after.ctimeMs
-    || bytes.byteLength !== after.size) {
-    throw new Error('reader release manifest changed while it was being read');
-  }
-  return bytes;
+  return readBoundedReaderReleaseFile(path, 'reader release manifest');
 }
 
 function parseJson(bytes: Uint8Array, path: string): unknown {

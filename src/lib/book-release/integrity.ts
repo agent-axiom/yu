@@ -1,12 +1,18 @@
 import { createHash } from 'node:crypto';
-import type { Stats } from 'node:fs';
-import { lstat, readdir, readFile } from 'node:fs/promises';
+import { constants as fileConstants, type BigIntStats } from 'node:fs';
+import { lstat, open, opendir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { join, relative, resolve, sep } from 'node:path';
 import type {
   ReaderReleaseFileDescriptor,
   ReaderReleaseManifest,
 } from './schemas';
+import {
+  READER_RELEASE_MAX_FILES,
+  READER_RELEASE_MAX_FILE_BYTES,
+  READER_RELEASE_MAX_TOTAL_BYTES,
+} from './schemas';
+import { assertApprovedReaderSvgBytes } from './svg-policy';
 
 const PAYLOAD_DOMAIN = 'yu-reader-payload-v1';
 const RELEASE_DOMAIN = 'yu-reader-release-v1';
@@ -21,15 +27,18 @@ export type RawReaderReleaseFile = {
 type FilesystemIdentity = {
   path: string;
   kind: 'file' | 'directory';
-  dev: number;
-  ino: number;
-  nlink: number;
-  size: number;
-  mtimeMs: number;
-  ctimeMs: number;
+  dev: bigint;
+  ino: bigint;
+  mode: bigint;
+  nlink: bigint;
+  size: bigint;
+  mtimeNs: bigint;
+  ctimeNs: bigint;
 };
 
 type IntegritySnapshot = {
+  projectRoot: string;
+  paths: readonly string[];
   files: readonly FilesystemIdentity[];
   directories: readonly FilesystemIdentity[];
 };
@@ -169,29 +178,33 @@ function rootPath(input: string | URL): string {
   return resolve(input instanceof URL ? fileURLToPath(input) : input);
 }
 
-async function assertRegularSingleLink(path: string, label: string) {
-  const metadata = await lstat(path);
+async function assertRegularSingleLink(path: string, label: string): Promise<BigIntStats> {
+  const metadata = await lstat(path, { bigint: true });
   if (!metadata.isFile() || metadata.isSymbolicLink()) {
     throw new Error(`${label} must be a regular file`);
   }
-  if (metadata.nlink !== 1) throw new Error(`${label} must have exactly one hard link`);
+  if (metadata.nlink !== 1n) throw new Error(`${label} must have exactly one hard link`);
+  if (metadata.size > BigInt(READER_RELEASE_MAX_FILE_BYTES)) {
+    throw new Error(`${label} exceeds the bounded per-file size`);
+  }
   return metadata;
 }
 
 function identityOf(
   path: string,
   kind: FilesystemIdentity['kind'],
-  metadata: Stats,
+  metadata: BigIntStats,
 ): FilesystemIdentity {
   return {
     path,
     kind,
     dev: metadata.dev,
     ino: metadata.ino,
+    mode: metadata.mode,
     nlink: metadata.nlink,
     size: metadata.size,
-    mtimeMs: metadata.mtimeMs,
-    ctimeMs: metadata.ctimeMs,
+    mtimeNs: metadata.mtimeNs,
+    ctimeNs: metadata.ctimeNs,
   };
 }
 
@@ -199,16 +212,17 @@ function sameIdentity(left: FilesystemIdentity, right: FilesystemIdentity): bool
   return left.kind === right.kind
     && left.dev === right.dev
     && left.ino === right.ino
+    && left.mode === right.mode
     && left.nlink === right.nlink
     && left.size === right.size
-    && left.mtimeMs === right.mtimeMs
-    && left.ctimeMs === right.ctimeMs;
+    && left.mtimeNs === right.mtimeNs
+    && left.ctimeNs === right.ctimeNs;
 }
 
 function retainDirectoryIdentity(
   identities: Map<string, FilesystemIdentity>,
   path: string,
-  metadata: Stats,
+  metadata: BigIntStats,
 ): void {
   const identity = identityOf(path, 'directory', metadata);
   const retained = identities.get(path);
@@ -225,20 +239,46 @@ async function readStableRegularFile(
   observer?: ReaderReleaseIntegrityObserver,
 ): Promise<{ bytes: Buffer; identity: FilesystemIdentity }> {
   const before = await assertRegularSingleLink(path, label);
-  const pendingRead = readFile(path);
+  const handle = await open(path, fileConstants.O_RDONLY | fileConstants.O_NOFOLLOW);
   try {
+    const opened = await handle.stat({ bigint: true });
+    if (!opened.isFile()
+      || opened.nlink !== 1n
+      || !sameIdentity(identityOf(path, 'file', before), identityOf(path, 'file', opened))) {
+      throw new Error(`${label} changed before its exact bytes were read`);
+    }
     await observer?.onFileReadStarted?.(observerPath);
-  } catch (error) {
-    await pendingRead.catch(() => undefined);
-    throw error;
+    const expectedByteLength = Number(opened.size);
+    const bytes = Buffer.allocUnsafe(expectedByteLength);
+    let offset = 0;
+    while (offset < expectedByteLength) {
+      const { bytesRead } = await handle.read(bytes, offset, expectedByteLength - offset, offset);
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+    if (offset !== expectedByteLength) {
+      throw new Error(`${label} size changed while its exact bytes were read`);
+    }
+    const overflow = Buffer.allocUnsafe(1);
+    const { bytesRead: overflowBytes } = await handle.read(overflow, 0, 1, expectedByteLength);
+    if (overflowBytes !== 0) {
+      throw new Error(`${label} size changed while its exact bytes were read`);
+    }
+    const verified = await handle.stat({ bigint: true });
+    const current = await assertRegularSingleLink(path, label);
+    if (!sameIdentity(identityOf(path, 'file', opened), identityOf(path, 'file', verified))
+      || !sameIdentity(identityOf(path, 'file', opened), identityOf(path, 'file', current))
+      || BigInt(bytes.byteLength) !== verified.size) {
+      throw new Error(`${label} changed while its exact bytes were being read`);
+    }
+    return { bytes, identity: identityOf(path, 'file', verified) };
+  } finally {
+    await handle.close();
   }
-  const bytes = await pendingRead;
-  const after = await assertRegularSingleLink(path, label);
-  if (!sameIdentity(identityOf(path, 'file', before), identityOf(path, 'file', after))
-    || bytes.byteLength !== after.size) {
-    throw new Error(`${label} changed while its exact bytes were being read`);
-  }
-  return { bytes, identity: identityOf(path, 'file', after) };
+}
+
+export async function readBoundedReaderReleaseFile(path: string, label: string): Promise<Buffer> {
+  return (await readStableRegularFile(path, label, label)).bytes;
 }
 
 async function captureDirectoryChain(
@@ -253,7 +293,7 @@ async function captureDirectoryChain(
     if (index >= 0) current = join(current, segments[index]!);
     let metadata;
     try {
-      metadata = await lstat(current);
+      metadata = await lstat(current, { bigint: true });
     } catch (error) {
       if (!required && error instanceof Error && 'code' in error && error.code === 'ENOENT') return;
       throw error;
@@ -269,7 +309,7 @@ async function recheckIdentities(identities: readonly FilesystemIdentity[]): Pro
   for (const identity of identities) {
     let metadata;
     try {
-      metadata = await lstat(identity.path);
+      metadata = await lstat(identity.path, { bigint: true });
     } catch (error) {
       throw new Error(`reader release filesystem identity changed during validation: ${identity.path}`, { cause: error });
     }
@@ -282,15 +322,56 @@ async function recheckIdentities(identities: readonly FilesystemIdentity[]): Pro
   }
 }
 
+type IntegrityTreeBudget = {
+  fileCount: number;
+  topologyCount: number;
+  totalBytes: bigint;
+};
+
+const readerReleaseCollectionDirectories = new Set([
+  'entries',
+  'notes',
+  'sources',
+  'objects',
+  'media',
+]);
+const readerReleaseMaxTopologyEntries = READER_RELEASE_MAX_FILES + 16;
+
+function retainTopologyBudget(budget: IntegrityTreeBudget, path: string): void {
+  budget.topologyCount += 1;
+  if (budget.topologyCount > readerReleaseMaxTopologyEntries) {
+    throw new Error(`reader release exceeds the maximum topology entry count: ${path}`);
+  }
+}
+
+function retainPayloadFileBudget(
+  budget: IntegrityTreeBudget,
+  metadata: BigIntStats,
+  relativePath: string,
+): void {
+  if (metadata.size > BigInt(READER_RELEASE_MAX_FILE_BYTES)) {
+    throw new Error(`reader release file exceeds the bounded per-file size: ${relativePath}`);
+  }
+  budget.fileCount += 1;
+  if (budget.fileCount > READER_RELEASE_MAX_FILES) {
+    throw new Error('reader release exceeds the maximum file count');
+  }
+  budget.totalBytes += metadata.size;
+  if (budget.totalBytes > BigInt(READER_RELEASE_MAX_TOTAL_BYTES)) {
+    throw new Error('reader release exceeds the aggregate byte budget');
+  }
+}
+
 async function collectTreeFiles(
   projectRoot: string,
   directory: string,
   files: string[],
   directoryIdentities: Map<string, FilesystemIdentity>,
+  budget: IntegrityTreeBudget,
 ): Promise<void> {
   let directoryMetadata;
   try {
-    directoryMetadata = await lstat(directory);
+    directoryMetadata = await lstat(directory, { bigint: true });
   } catch (error) {
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return;
     throw error;
@@ -298,27 +379,70 @@ async function collectTreeFiles(
   if (!directoryMetadata.isDirectory() || directoryMetadata.isSymbolicLink()) {
     throw new Error(`reader release directory must not be a symbolic link: ${directory}`);
   }
+  retainTopologyBudget(budget, directory);
   retainDirectoryIdentity(directoryIdentities, directory, directoryMetadata);
-  let entries;
+  let openedDirectory;
   try {
-    entries = await readdir(directory, { withFileTypes: true });
+    openedDirectory = await opendir(directory);
   } catch (error) {
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return;
     throw error;
   }
-  entries.sort((left, right) => compareCodeUnits(left.name, right.name));
-  for (const entry of entries) {
-    const absolutePath = join(directory, entry.name);
-    const metadata = await lstat(absolutePath);
-    if (metadata.isSymbolicLink()) throw new Error(`reader release rejects symbolic link: ${absolutePath}`);
-    if (metadata.isDirectory()) {
-      await collectTreeFiles(projectRoot, absolutePath, files, directoryIdentities);
-      continue;
+  const relativeDirectory = relative(projectRoot, directory).split(sep).join('/');
+  try {
+    while (true) {
+      const entry = await openedDirectory.read();
+      if (!entry) break;
+      const absolutePath = join(directory, entry.name);
+      const metadata = await lstat(absolutePath, { bigint: true });
+      if (metadata.isSymbolicLink()) throw new Error(`reader release rejects symbolic link: ${absolutePath}`);
+      if (metadata.isDirectory()) {
+        if (relativeDirectory !== 'src/content/book-release'
+          || !readerReleaseCollectionDirectories.has(entry.name)) {
+          throw new Error(`unexpected reader release topology directory: ${absolutePath}`);
+        }
+        await collectTreeFiles(projectRoot, absolutePath, files, directoryIdentities, budget);
+        continue;
+      }
+      retainTopologyBudget(budget, absolutePath);
+      if (!metadata.isFile()) throw new Error(`reader release requires regular files: ${absolutePath}`);
+      if (metadata.nlink !== 1n) throw new Error(`reader release rejects multi-link file at ${absolutePath}`);
+      const relativePath = relative(projectRoot, absolutePath).split(sep).join('/');
+      if (relativePath !== 'src/content/book-release/manifest.json') {
+        retainPayloadFileBudget(budget, metadata, relativePath);
+        files.push(relativePath);
+      }
     }
-    if (!metadata.isFile()) throw new Error(`reader release requires regular files: ${absolutePath}`);
-    if (metadata.nlink !== 1) throw new Error(`reader release rejects multi-link file at ${absolutePath}`);
-    const relativePath = relative(projectRoot, absolutePath).split(sep).join('/');
-    if (relativePath !== 'src/content/book-release/manifest.json') files.push(relativePath);
+  } finally {
+    await openedDirectory.close();
+  }
+  const verifiedDirectory = await lstat(directory, { bigint: true });
+  if (!verifiedDirectory.isDirectory()
+    || verifiedDirectory.isSymbolicLink()
+    || !sameIdentity(
+      identityOf(directory, 'directory', directoryMetadata),
+      identityOf(directory, 'directory', verifiedDirectory),
+    )) {
+    throw new Error(`reader release directory changed during traversal: ${directory}`);
+  }
+}
+
+function assertManifestResourceBounds(manifest: ReaderReleaseManifest): void {
+  if (manifest.files.length > READER_RELEASE_MAX_FILES) {
+    throw new Error('reader release exceeds the maximum descriptor count');
+  }
+  let totalBytes = 0n;
+  for (const descriptor of manifest.files) {
+    if (!Number.isSafeInteger(descriptor.byteLength) || descriptor.byteLength < 0) {
+      throw new Error(`reader release descriptor has an invalid byte size: ${descriptor.path}`);
+    }
+    if (descriptor.byteLength > READER_RELEASE_MAX_FILE_BYTES) {
+      throw new Error(`reader release descriptor exceeds the bounded per-file size: ${descriptor.path}`);
+    }
+    totalBytes += BigInt(descriptor.byteLength);
+    if (totalBytes > BigInt(READER_RELEASE_MAX_TOTAL_BYTES)) {
+      throw new Error('reader release descriptors exceed the aggregate byte budget');
+    }
   }
 }
 
@@ -347,6 +471,7 @@ export async function verifyReaderReleaseIntegrity(
   observer?: ReaderReleaseIntegrityObserver,
 ): Promise<RawReaderReleaseFile[]> {
   const projectRoot = rootPath(root);
+  assertManifestResourceBounds(manifest);
   const manifestPath = join(projectRoot, 'src/content/book-release/manifest.json');
   const directoryIdentities = new Map<string, FilesystemIdentity>();
   await captureDirectoryChain(projectRoot, 'src/content/book-release', true, directoryIdentities);
@@ -359,17 +484,20 @@ export async function verifyReaderReleaseIntegrity(
   );
 
   const actualPaths: string[] = [];
+  const treeBudget: IntegrityTreeBudget = { fileCount: 0, topologyCount: 0, totalBytes: 0n };
   await collectTreeFiles(
     projectRoot,
     join(projectRoot, 'src/content/book-release'),
     actualPaths,
     directoryIdentities,
+    treeBudget,
   );
   await collectTreeFiles(
     projectRoot,
     join(projectRoot, 'public/images/book-release'),
     actualPaths,
     directoryIdentities,
+    treeBudget,
   );
   actualPaths.sort(compareCodeUnits);
   assertBijection(manifest.files, actualPaths);
@@ -401,6 +529,9 @@ export async function verifyReaderReleaseIntegrity(
     if (sha256(bytes) !== descriptor.sha256) {
       throw new Error(`${descriptor.path} SHA-256 does not match its descriptor`);
     }
+    if (/\.svg$/iu.test(descriptor.path)) {
+      assertApprovedReaderSvgBytes(bytes, descriptor.path);
+    }
     files.push({ path: descriptor.path, bytes });
     fileIdentities.push(identity);
   }
@@ -415,6 +546,8 @@ export async function verifyReaderReleaseIntegrity(
     throw new Error('reader release content-binding digest does not match exact bytes');
   }
   const snapshot: IntegritySnapshot = {
+    projectRoot,
+    paths: actualPaths,
     files: fileIdentities,
     directories: [...directoryIdentities.values()],
   };
@@ -428,6 +561,30 @@ export async function recheckVerifiedReaderRelease(
 ): Promise<void> {
   const snapshot = integritySnapshots.get(files);
   if (!snapshot) throw new Error('reader release files do not carry a retained integrity snapshot');
+  await recheckIdentities(snapshot.files);
+  await recheckIdentities(snapshot.directories);
+  const currentPaths: string[] = [];
+  const currentDirectories = new Map<string, FilesystemIdentity>();
+  const currentBudget: IntegrityTreeBudget = { fileCount: 0, topologyCount: 0, totalBytes: 0n };
+  await collectTreeFiles(
+    snapshot.projectRoot,
+    join(snapshot.projectRoot, 'src/content/book-release'),
+    currentPaths,
+    currentDirectories,
+    currentBudget,
+  );
+  await collectTreeFiles(
+    snapshot.projectRoot,
+    join(snapshot.projectRoot, 'public/images/book-release'),
+    currentPaths,
+    currentDirectories,
+    currentBudget,
+  );
+  currentPaths.sort(compareCodeUnits);
+  if (currentPaths.length !== snapshot.paths.length
+    || currentPaths.some((path, index) => path !== snapshot.paths[index])) {
+    throw new Error('reader release filesystem topology changed during validation');
+  }
   await recheckIdentities(snapshot.files);
   await recheckIdentities(snapshot.directories);
 }

@@ -1,4 +1,4 @@
-import { link, mkdir, mkdtemp, open, rename, rm, truncate, writeFile } from 'node:fs/promises';
+import { link, mkdir, mkdtemp, open, readdir, rename, rm, truncate, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -410,6 +410,50 @@ describe('release-layer sentinel scan', () => {
       await writeLayerFile(root, 'dist/book/oversized.webp', 'Jade');
       await truncate(path, (64 * 1024 * 1024) + 1);
       await expect(scanReaderReleaseLayers(root)).rejects.toThrow(/size|bound|large/iu);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'closes captured file descriptors before semantic scanning a large runtime tree',
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-bounded-fd-'));
+      const descriptorRoot = process.platform === 'linux' ? '/proc/self/fd' : '/dev/fd';
+      try {
+        for (let index = 0; index < 420; index += 1) {
+          await writeLayerFile(
+            root,
+            `src/pages/book/group-${String(index % 320).padStart(3, '0')}/page-${String(index).padStart(3, '0')}.astro`,
+            '<main>Jade</main>',
+          );
+        }
+        const baseline = (await readdir(descriptorRoot)).length;
+        let peakDelta: number | undefined;
+        await scanReaderReleaseLayers(root, {
+          afterEntryScan: async () => {
+            if (peakDelta !== undefined) return;
+            peakDelta = (await readdir(descriptorRoot)).length - baseline;
+          },
+        });
+        expect(peakDelta).toBeDefined();
+        expect(peakDelta!).toBeLessThan(64);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it('rejects a runtime tree deeper than the bounded snapshot recursion limit', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yu-reader-layer-depth-bound-'));
+    try {
+      const segments = Array.from({ length: 65 }, (_, index) => `level-${String(index).padStart(2, '0')}`);
+      await writeLayerFile(
+        root,
+        `src/pages/book/${segments.join('/')}/index.astro`,
+        '<main>Jade</main>',
+      );
+      await expect(scanReaderReleaseLayers(root)).rejects.toThrow(/depth|deep|bound/iu);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

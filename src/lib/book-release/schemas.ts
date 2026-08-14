@@ -1,6 +1,6 @@
-import { constants as fileConstants, existsSync, readdirSync } from 'node:fs';
-import { lstat, open, readdir } from 'node:fs/promises';
-import { isAbsolute, join, posix, relative } from 'node:path';
+import { constants as fileConstants, existsSync, readdirSync, type Dirent } from 'node:fs';
+import { lstat, open, opendir, type FileHandle } from 'node:fs/promises';
+import { join, posix, relative, sep, win32 } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { DataStore, Loader, LoaderContext } from 'astro/loaders';
 import { fromMarkdown } from 'mdast-util-from-markdown';
@@ -209,7 +209,7 @@ export const readerObjectSchema = z.object({
 const mediaShape = {
   id: publicMediaIdSchema,
   outputName: z.string()
-    .regex(/^[a-z0-9](?!.*\.\.)[a-z0-9._-]*\.(?:avif|jpe?g|png|svg|webp)$/u),
+    .regex(/^[a-z0-9](?!.*\.\.)[a-z0-9._-]*\.(?:svg|webp)$/u),
   alt: z.string().min(20),
   caption: z.string().min(20),
   credit: z.string().min(2),
@@ -257,8 +257,12 @@ const notePayloadPathPattern = /^src\/content\/book-release\/notes\/note-[a-z0-9
 const sourcePayloadPathPattern = /^src\/content\/book-release\/sources\/source-[a-z0-9-]+\.json$/u;
 const objectPayloadPathPattern = /^src\/content\/book-release\/objects\/object-[a-z0-9-]+\.json$/u;
 const mediaPayloadPathPattern = /^src\/content\/book-release\/media\/media-[a-z0-9-]+\.json$/u;
-const imagePayloadPathPattern = /^public\/images\/book-release\/[a-z0-9](?!.*\.\.)[a-z0-9._-]*\.(?:avif|jpe?g|png|svg|webp)$/u;
+const imagePayloadPathPattern = /^public\/images\/book-release\/[a-z0-9](?!.*\.\.)[a-z0-9._-]*\.(?:svg|webp)$/u;
 const nulSeparator = String.fromCodePoint(0);
+
+export const READER_RELEASE_MAX_FILE_BYTES = 64 * 1024 * 1024;
+export const READER_RELEASE_MAX_TOTAL_BYTES = 256 * 1024 * 1024;
+export const READER_RELEASE_MAX_FILES = 10_000;
 
 function isExactPayloadPath(value: string): boolean {
   return entryPayloadPathPattern.test(value)
@@ -281,7 +285,10 @@ const payloadPathSchema = z.string().min(1).superRefine((value, context) => {
 export const readerReleaseFileDescriptorSchema = z.object({
   path: payloadPathSchema,
   kind: z.enum(['text', 'binary']),
-  byteLength: z.number().int().nonnegative(),
+  byteLength: z.number().int().nonnegative().max(
+    READER_RELEASE_MAX_FILE_BYTES,
+    'reader release file exceeds the bounded byte size',
+  ),
   sha256: sha256HexSchema,
 }).strict().superRefine((file, context) => {
   const expectedKind = file.path.startsWith('public/images/book-release/') ? 'binary' : 'text';
@@ -356,9 +363,19 @@ export const readerReleaseManifestSchema = z.object({
   readerPayloadDigest: sha256HexSchema,
   readingOrder: uniqueArray(publicEntryIdSchema, 1),
   counts: readerCountsSchema,
-  files: z.array(readerReleaseFileDescriptorSchema).min(1),
+  files: z.array(readerReleaseFileDescriptorSchema)
+    .min(1)
+    .max(READER_RELEASE_MAX_FILES, 'reader release exceeds the maximum descriptor count'),
   reviewAttestation: readerReviewAttestationSchema,
 }).strict().superRefine((manifest, context) => {
+  const totalBytes = manifest.files.reduce((total, file) => total + file.byteLength, 0);
+  if (totalBytes > READER_RELEASE_MAX_TOTAL_BYTES) {
+    context.addIssue({
+      code: 'custom',
+      path: ['files'],
+      message: 'reader release descriptors exceed the aggregate byte budget',
+    });
+  }
   if (manifest.targetCommit === manifest.reviewEvidenceCommit) {
     context.addIssue({
       code: 'custom',
@@ -666,6 +683,8 @@ function publicImageRootUrl(context: LoaderContext): URL {
 }
 
 const maxRawReaderJsonBytes = 8 * 1024 * 1024;
+const maxRawReaderJsonTotalBytes = READER_RELEASE_MAX_TOTAL_BYTES;
+const maxRawReaderJsonEntries = READER_RELEASE_MAX_FILES;
 
 async function rawReaderJsonMetadata(path: URL) {
   try {
@@ -706,9 +725,60 @@ function assertRawReaderJsonFile(
   }
 }
 
-async function readStableRawReaderJson(path: URL): Promise<Buffer> {
+type RawReaderJsonFileSnapshot = {
+  path: URL;
+  label: string;
+  metadata: RawReaderJsonMetadata;
+  bytes: Buffer;
+};
+
+type RawReaderJsonDirectorySnapshot = {
+  path: URL;
+  label: string;
+  metadata: RawReaderJsonMetadata;
+  names: string[];
+  handle: FileHandle;
+};
+
+type RawReaderJsonScopeSnapshot = {
+  scopePath: URL;
+  scopeMetadata: RawReaderJsonMetadata | null;
+  guards: RawReaderJsonDirectorySnapshot[];
+  directory?: RawReaderJsonDirectorySnapshot;
+  files: RawReaderJsonFileSnapshot[];
+};
+
+async function readExactRawReaderJsonBytes(
+  handle: FileHandle,
+  metadata: RawReaderJsonMetadata,
+  label: string,
+): Promise<Buffer> {
+  assertRawReaderJsonFile(metadata, label);
+  const expectedByteLength = Number(metadata.size);
+  const bytes = Buffer.allocUnsafe(expectedByteLength);
+  let offset = 0;
+  while (offset < expectedByteLength) {
+    const { bytesRead } = await handle.read(bytes, offset, expectedByteLength - offset, offset);
+    if (bytesRead === 0) break;
+    offset += bytesRead;
+  }
+  if (offset !== expectedByteLength) {
+    throw new Error(`generated reader JSON size changed while reading: ${label}`);
+  }
+  const overflow = Buffer.allocUnsafe(1);
+  const { bytesRead: overflowBytes } = await handle.read(overflow, 0, 1, expectedByteLength);
+  if (overflowBytes !== 0) {
+    throw new Error(`generated reader JSON size changed while reading: ${label}`);
+  }
+  return bytes;
+}
+
+async function captureStableRawReaderJson(
+  path: URL,
+  expectedMetadata?: RawReaderJsonMetadata,
+): Promise<RawReaderJsonFileSnapshot> {
   const label = fileURLToPath(path);
-  const expected = await rawReaderJsonMetadata(path);
+  const expected = expectedMetadata ?? await rawReaderJsonMetadata(path);
   if (!expected) throw new Error(`generated reader JSON disappeared before reading: ${label}`);
   assertRawReaderJsonFile(expected, label);
 
@@ -720,23 +790,7 @@ async function readStableRawReaderJson(path: URL): Promise<Buffer> {
       throw new Error(`generated reader JSON identity or metadata changed before reading: ${label}`);
     }
 
-    const expectedByteLength = Number(opened.size);
-    const bytes = Buffer.allocUnsafe(expectedByteLength);
-    let offset = 0;
-    while (offset < expectedByteLength) {
-      const { bytesRead } = await handle.read(bytes, offset, expectedByteLength - offset, offset);
-      if (bytesRead === 0) break;
-      offset += bytesRead;
-    }
-    if (offset !== expectedByteLength) {
-      throw new Error(`generated reader JSON size changed while reading: ${label}`);
-    }
-    const overflow = Buffer.allocUnsafe(1);
-    const { bytesRead: overflowBytes } = await handle.read(overflow, 0, 1, expectedByteLength);
-    if (overflowBytes !== 0) {
-      throw new Error(`generated reader JSON size changed while reading: ${label}`);
-    }
-
+    const bytes = await readExactRawReaderJsonBytes(handle, opened, label);
     const verified = await handle.stat({ bigint: true });
     const current = await rawReaderJsonMetadata(path);
     if (!verified.isFile()
@@ -747,44 +801,172 @@ async function readStableRawReaderJson(path: URL): Promise<Buffer> {
       || !sameRawReaderJsonMetadata(opened, current)) {
       throw new Error(`generated reader JSON identity or metadata changed while reading: ${label}`);
     }
-    return bytes;
+    return { path, label, metadata: opened, bytes };
   } finally {
     await handle.close();
   }
 }
 
-async function validateStrictReaderJsonScope(
-  context: LoaderContext,
-  scope: ReaderReleaseJsonScope,
-): Promise<void> {
-  const releaseRoot = releaseRootUrl(context);
-  if (scope === 'manifest') {
-    const path = new URL('manifest.json', releaseRoot);
-    if (await rawReaderJsonMetadata(path)) {
-      parseStrictUtf8Json(await readStableRawReaderJson(path), fileURLToPath(path));
-    }
-    return;
-  }
-  const directory = new URL(`${scope}/`, releaseRoot);
-  const expectedDirectory = await rawReaderJsonMetadata(directory);
-  if (!expectedDirectory) return;
-  const directoryLabel = fileURLToPath(directory);
-  if (expectedDirectory.isSymbolicLink() || !expectedDirectory.isDirectory()) {
-    throw new Error(`generated reader JSON collection must be a regular directory: ${directoryLabel}`);
-  }
+async function closeRawReaderJsonScopeSnapshot(snapshot: RawReaderJsonScopeSnapshot): Promise<void> {
+  const handles: FileHandle[] = [];
+  if (snapshot.directory) handles.push(snapshot.directory.handle);
+  handles.push(...snapshot.guards.map(({ handle }) => handle));
+  await Promise.all(handles.map(async (handle) => handle.close()));
+}
 
-  const directoryHandle = await open(
-    directory,
+async function readBoundedRawReaderJsonDirectoryEntries(
+  path: URL,
+  label: string,
+): Promise<Dirent[]> {
+  const directory = await opendir(path);
+  const entries: Dirent[] = [];
+  try {
+    while (true) {
+      const entry = await directory.read();
+      if (!entry) break;
+      if (entries.length >= maxRawReaderJsonEntries) {
+        throw new Error(`generated reader JSON directory exceeds the bounded entry count: ${label}`);
+      }
+      entries.push(entry);
+    }
+  } finally {
+    await directory.close();
+  }
+  entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+  return entries;
+}
+
+async function readBoundedRawReaderJsonDirectoryNames(
+  path: URL,
+  label: string,
+): Promise<string[]> {
+  return (await readBoundedRawReaderJsonDirectoryEntries(path, label)).map(({ name }) => name);
+}
+
+async function captureRawReaderJsonDirectoryGuard(
+  path: URL,
+): Promise<RawReaderJsonDirectorySnapshot | null> {
+  const label = fileURLToPath(path);
+  const expected = await rawReaderJsonMetadata(path);
+  if (!expected) return null;
+  if (expected.isSymbolicLink() || !expected.isDirectory()) {
+    throw new Error(`generated reader JSON guard must be a regular directory: ${label}`);
+  }
+  const handle = await open(
+    path,
     fileConstants.O_RDONLY | fileConstants.O_NOFOLLOW | fileConstants.O_DIRECTORY,
   );
+  let retained = false;
   try {
+    const opened = await handle.stat({ bigint: true });
+    if (!opened.isDirectory() || !sameRawReaderJsonMetadata(expected, opened)) {
+      throw new Error(`generated reader JSON guard changed before reading: ${label}`);
+    }
+    const names = await readBoundedRawReaderJsonDirectoryNames(path, label);
+    const verified = await handle.stat({ bigint: true });
+    const current = await rawReaderJsonMetadata(path);
+    if (!sameRawReaderJsonMetadata(opened, verified)
+      || !current
+      || !sameRawReaderJsonMetadata(opened, current)) {
+      throw new Error(`generated reader JSON guard changed while reading: ${label}`);
+    }
+    retained = true;
+    return { path, label, metadata: opened, names, handle };
+  } finally {
+    if (!retained) await handle.close();
+  }
+}
+
+async function captureRawReaderJsonDirectoryGuards(
+  context: LoaderContext,
+): Promise<RawReaderJsonDirectorySnapshot[]> {
+  const guards: RawReaderJsonDirectorySnapshot[] = [];
+  const paths = [
+    new URL('./', context.config.root),
+    new URL('./src/', context.config.root),
+    new URL('./src/content/', context.config.root),
+    releaseRootUrl(context),
+  ];
+  try {
+    for (const path of paths) {
+      const guard = await captureRawReaderJsonDirectoryGuard(path);
+      if (guard) guards.push(guard);
+    }
+    return guards;
+  } catch (error) {
+    await Promise.all(guards.map(async ({ handle }) => handle.close()));
+    throw error;
+  }
+}
+
+async function captureStrictReaderJsonScope(
+  context: LoaderContext,
+  scope: ReaderReleaseJsonScope,
+): Promise<RawReaderJsonScopeSnapshot> {
+  const releaseRoot = releaseRootUrl(context);
+  const guards = await captureRawReaderJsonDirectoryGuards(context);
+  if (scope === 'manifest') {
+    const path = new URL('manifest.json', releaseRoot);
+    const snapshot: RawReaderJsonScopeSnapshot = {
+      scopePath: path,
+      scopeMetadata: null,
+      guards,
+      files: [],
+    };
+    try {
+      const expected = await rawReaderJsonMetadata(path);
+      snapshot.scopeMetadata = expected;
+      if (expected) {
+        const file = await captureStableRawReaderJson(path, expected);
+        snapshot.files.push(file);
+        parseStrictUtf8Json(file.bytes, file.label);
+      }
+      return snapshot;
+    } catch (error) {
+      await closeRawReaderJsonScopeSnapshot(snapshot);
+      throw error;
+    }
+  }
+  const directory = new URL(`${scope}/`, releaseRoot);
+  const snapshot: RawReaderJsonScopeSnapshot = {
+    scopePath: directory,
+    scopeMetadata: null,
+    guards,
+    files: [],
+  };
+  try {
+    const expectedDirectory = await rawReaderJsonMetadata(directory);
+    snapshot.scopeMetadata = expectedDirectory;
+    if (!expectedDirectory) return snapshot;
+    const directoryLabel = fileURLToPath(directory);
+    if (expectedDirectory.isSymbolicLink() || !expectedDirectory.isDirectory()) {
+      throw new Error(`generated reader JSON collection must be a regular directory: ${directoryLabel}`);
+    }
+
+    const directoryHandle = await open(
+      directory,
+      fileConstants.O_RDONLY | fileConstants.O_NOFOLLOW | fileConstants.O_DIRECTORY,
+    );
+    snapshot.directory = {
+      path: directory,
+      label: directoryLabel,
+      metadata: expectedDirectory,
+      names: [],
+      handle: directoryHandle,
+    };
     const openedDirectory = await directoryHandle.stat({ bigint: true });
     if (!openedDirectory.isDirectory()
       || !sameRawReaderJsonMetadata(expectedDirectory, openedDirectory)) {
       throw new Error(`generated reader JSON collection changed before reading: ${directoryLabel}`);
     }
-    const entries = await readdir(directory, { withFileTypes: true });
-    entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+    const entries = await readBoundedRawReaderJsonDirectoryEntries(directory, directoryLabel);
+    snapshot.directory.metadata = openedDirectory;
+    snapshot.directory.names = entries.map(({ name }) => name);
+    const candidates: Array<{
+      path: URL;
+      metadata: RawReaderJsonMetadata;
+    }> = [];
+    let totalBytes = 0n;
     for (const entry of entries) {
       if (entry.isSymbolicLink()) {
         throw new Error(`generated reader JSON collection rejects symbolic link: ${entry.name}`);
@@ -793,7 +975,19 @@ async function validateStrictReaderJsonScope(
         throw new Error(`unexpected generated reader JSON collection entry: ${entry.name}`);
       }
       const path = pathToFileURL(join(directoryLabel, entry.name));
-      parseStrictUtf8Json(await readStableRawReaderJson(path), fileURLToPath(path));
+      const metadata = await rawReaderJsonMetadata(path);
+      if (!metadata) throw new Error(`generated reader JSON disappeared before reading: ${entry.name}`);
+      assertRawReaderJsonFile(metadata, fileURLToPath(path));
+      totalBytes += metadata.size;
+      if (totalBytes > BigInt(maxRawReaderJsonTotalBytes)) {
+        throw new Error(`generated reader JSON collection exceeds the aggregate byte budget: ${directoryLabel}`);
+      }
+      candidates.push({ path, metadata });
+    }
+    for (const candidate of candidates) {
+      const file = await captureStableRawReaderJson(candidate.path, candidate.metadata);
+      snapshot.files.push(file);
+      parseStrictUtf8Json(file.bytes, file.label);
     }
     const verifiedDirectory = await directoryHandle.stat({ bigint: true });
     const currentDirectory = await rawReaderJsonMetadata(directory);
@@ -803,9 +997,87 @@ async function validateStrictReaderJsonScope(
       || !sameRawReaderJsonMetadata(openedDirectory, currentDirectory)) {
       throw new Error(`generated reader JSON collection changed while reading: ${directoryLabel}`);
     }
-  } finally {
-    await directoryHandle.close();
+    return snapshot;
+  } catch (error) {
+    await closeRawReaderJsonScopeSnapshot(snapshot);
+    throw error;
   }
+}
+
+async function revalidateRawReaderJsonFile(snapshot: RawReaderJsonFileSnapshot): Promise<void> {
+  const current = await captureStableRawReaderJson(snapshot.path, snapshot.metadata);
+  if (!current.bytes.equals(snapshot.bytes)
+    || !sameRawReaderJsonMetadata(snapshot.metadata, current.metadata)) {
+    throw new Error(`generated reader JSON bytes, identity, or metadata changed after parsing: ${snapshot.label}`);
+  }
+}
+
+async function revalidateRawReaderJsonDirectoryGuard(
+  snapshot: RawReaderJsonDirectorySnapshot,
+): Promise<void> {
+  const opened = await snapshot.handle.stat({ bigint: true });
+  const current = await rawReaderJsonMetadata(snapshot.path);
+  if (!opened.isDirectory()
+    || !sameRawReaderJsonMetadata(snapshot.metadata, opened)
+    || !current
+    || !sameRawReaderJsonMetadata(snapshot.metadata, current)) {
+    throw new Error(`generated reader JSON directory identity or metadata changed after parsing: ${snapshot.label}`);
+  }
+  const names = await readBoundedRawReaderJsonDirectoryNames(snapshot.path, snapshot.label);
+  if (names.length !== snapshot.names.length
+    || names.some((name, index) => name !== snapshot.names[index])) {
+    throw new Error(`generated reader JSON directory topology changed after parsing: ${snapshot.label}`);
+  }
+  const verified = await snapshot.handle.stat({ bigint: true });
+  const final = await rawReaderJsonMetadata(snapshot.path);
+  if (!sameRawReaderJsonMetadata(snapshot.metadata, verified)
+    || !final
+    || !sameRawReaderJsonMetadata(snapshot.metadata, final)) {
+    throw new Error(`generated reader JSON directory changed during topology validation: ${snapshot.label}`);
+  }
+}
+
+async function revalidateStrictReaderJsonScope(snapshot: RawReaderJsonScopeSnapshot): Promise<void> {
+  for (const guard of snapshot.guards) await revalidateRawReaderJsonDirectoryGuard(guard);
+  if (!snapshot.scopeMetadata) {
+    if (await rawReaderJsonMetadata(snapshot.scopePath)) {
+      throw new Error('generated reader JSON topology changed after parsing');
+    }
+    for (const guard of snapshot.guards) await revalidateRawReaderJsonDirectoryGuard(guard);
+    if (await rawReaderJsonMetadata(snapshot.scopePath)) {
+      throw new Error('generated reader JSON topology changed after parsing');
+    }
+    return;
+  }
+  if (!snapshot.directory) {
+    for (const file of snapshot.files) await revalidateRawReaderJsonFile(file);
+    for (const guard of snapshot.guards) await revalidateRawReaderJsonDirectoryGuard(guard);
+    return;
+  }
+
+  const directory = snapshot.directory;
+  const openedDirectory = await directory.handle.stat({ bigint: true });
+  const currentDirectory = await rawReaderJsonMetadata(directory.path);
+  if (!openedDirectory.isDirectory()
+    || !sameRawReaderJsonMetadata(directory.metadata, openedDirectory)
+    || !currentDirectory
+    || !sameRawReaderJsonMetadata(directory.metadata, currentDirectory)) {
+    throw new Error(`generated reader JSON collection identity or metadata changed after parsing: ${directory.label}`);
+  }
+  const entries = await readBoundedRawReaderJsonDirectoryEntries(directory.path, directory.label);
+  if (entries.length !== directory.names.length
+    || entries.some((entry, index) => entry.name !== directory.names[index])) {
+    throw new Error(`generated reader JSON collection topology changed after parsing: ${directory.label}`);
+  }
+  for (const file of snapshot.files) await revalidateRawReaderJsonFile(file);
+  const verifiedDirectory = await directory.handle.stat({ bigint: true });
+  const finalDirectory = await rawReaderJsonMetadata(directory.path);
+  if (!sameRawReaderJsonMetadata(directory.metadata, verifiedDirectory)
+    || !finalDirectory
+    || !sameRawReaderJsonMetadata(directory.metadata, finalDirectory)) {
+    throw new Error(`generated reader JSON collection changed during post-parse validation: ${directory.label}`);
+  }
+  for (const guard of snapshot.guards) await revalidateRawReaderJsonDirectoryGuard(guard);
 }
 
 function directoryHasPayload(directory: URL): boolean {
@@ -872,9 +1144,18 @@ function validateLoadedManifest(context: LoaderContext): void {
   }
 }
 
+export function isReaderWatcherRelativePathInsideRoot(
+  pathFromRoot: string,
+  separator: '/' | '\\' = sep as '/' | '\\',
+): boolean {
+  const pathApi = separator === '\\' ? win32 : posix;
+  return pathFromRoot === '' || (pathFromRoot !== '..'
+    && !pathFromRoot.startsWith(`..${separator}`)
+    && !pathApi.isAbsolute(pathFromRoot));
+}
+
 function isInsideReleaseRoot(rootPath: string, changedPath: string): boolean {
-  const pathFromRoot = relative(rootPath, changedPath);
-  return pathFromRoot === '' || (!pathFromRoot.startsWith('../') && !isAbsolute(pathFromRoot));
+  return isReaderWatcherRelativePathInsideRoot(relative(rootPath, changedPath));
 }
 
 const READER_RELEASE_RESTART_REQUIRED =
@@ -997,13 +1278,15 @@ export function withImmutableReaderCollection(
     name: `immutable-reader:${baseLoader.name}`,
     async load(context) {
       let invalidation: ReaderInvalidationRegistration | undefined;
+      let rawJsonSnapshot: RawReaderJsonScopeSnapshot | undefined;
       try {
         invalidation = registerReaderInvalidation(context);
         if (invalidation?.coordinator.invalidated) {
           throw new Error(READER_RELEASE_RESTART_REQUIRED);
         }
-        if (jsonScope) await validateStrictReaderJsonScope(context, jsonScope);
+        if (jsonScope) rawJsonSnapshot = await captureStrictReaderJsonScope(context, jsonScope);
         await baseLoader.load({ ...context, watcher: undefined });
+        if (rawJsonSnapshot) await revalidateStrictReaderJsonScope(rawJsonSnapshot);
         if (invalidation?.target.dirtyDuringLoad) {
           context.store.clear();
           throw new Error(READER_RELEASE_RESTART_REQUIRED);
@@ -1012,6 +1295,7 @@ export function withImmutableReaderCollection(
         context.store.clear();
         throw error;
       } finally {
+        if (rawJsonSnapshot) await closeRawReaderJsonScopeSnapshot(rawJsonSnapshot);
         if (invalidation) invalidation.target.loading = false;
       }
     },

@@ -3,7 +3,9 @@ import {
   mkdtemp,
   mkdir,
   open,
+  readdir,
   readFile,
+  rename,
   rm,
   symlink,
   truncate,
@@ -17,6 +19,7 @@ import type { DataStore, Loader, LoaderContext } from 'astro/loaders';
 import { describe, expect, it } from 'vitest';
 import {
   computeReadingMinutes,
+  isReaderWatcherRelativePathInsideRoot,
   readerContentBindingSchema,
   readerEntrySchema,
   readerMediaSchema,
@@ -249,6 +252,58 @@ describe('strict reader records', () => {
     }
   });
 
+  it('rejects a manifest swapped to malicious JSON and restored during Astro parsing', async () => {
+    const factories = await loadFactories();
+    const tree = await createReleaseTree();
+    try {
+      const target = join(tree.rootPath, 'src/content/book-release/manifest.json');
+      const original = join(tree.rootPath, 'manifest-original.json');
+      const malicious = join(tree.rootPath, 'manifest-malicious.json');
+      await writeFile(malicious, String.raw`{"projection":"private-v1","\u0070rojection":"reader-v1"}`);
+      const baseLoader: Loader = {
+        name: 'transient-manifest-swap-loader',
+        load: async ({ store }) => {
+          await rename(target, original);
+          await rename(malicious, target);
+          store.set({ id: 'manifest', data: validManifest });
+          await unlink(target);
+          await rename(original, target);
+        },
+      };
+      await expect(factories.withReaderManifestValidation(baseLoader)
+        .load(createLoaderContext(tree.root)))
+        .rejects.toThrow(/changed|directory|metadata|snapshot|topology|parse/iu);
+    } finally {
+      await rm(tree.rootPath, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a missing JSON scope created, parsed, and removed during Astro parsing', async () => {
+    const factories = await loadFactories();
+    const tree = await createReleaseTree();
+    const notesDirectory = join(tree.rootPath, 'src/content/book-release/notes');
+    await rm(notesDirectory, { recursive: true, force: true });
+    try {
+      const baseLoader: Loader = {
+        name: 'transient-missing-scope-loader',
+        load: async ({ store }) => {
+          await mkdir(notesDirectory);
+          await writeFile(
+            join(notesDirectory, 'note-001.json'),
+            String.raw`{"id":"claim-private","\u0069d":"note-001"}`,
+          );
+          store.set({ id: validNote.id, data: validNote });
+          await rm(notesDirectory, { recursive: true, force: true });
+        },
+      };
+      await expect(factories.withImmutableReaderCollection(baseLoader, 'notes')
+        .load(createLoaderContext(tree.root)))
+        .rejects.toThrow(/changed|directory|metadata|snapshot|topology|parse/iu);
+    } finally {
+      await rm(tree.rootPath, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     ['entry', readerEntrySchema, { ...validEntry, claimIds: ['claim-private'] }],
     ['note', readerNoteSchema, { ...validNote, claimId: 'claim-private' }],
@@ -368,6 +423,13 @@ describe('strict reader media', () => {
     expect(() => readerMediaSchema.parse(media)).toThrow();
   });
 
+  it.each(['jade.avif', 'jade.jpeg', 'jade.jpg', 'jade.png', 'jade.SVG', 'jade.WEBP'])(
+    'rejects the unsupported or non-canonical media output extension %s',
+    (outputName) => {
+      expect(() => readerMediaSchema.parse({ ...validDocumentaryMedia, outputName })).toThrow();
+    },
+  );
+
   it.each([
     ...Object.keys(validDocumentaryMedia).filter((key) => key !== 'sourceUrl').map((key) => ['documentary', validDocumentaryMedia, key] as const),
     ...Object.keys(validAuthoredDiagramMedia).filter((key) => key !== 'sourceUrl').map((key) => ['authored diagram', validAuthoredDiagramMedia, key] as const),
@@ -410,6 +472,16 @@ describe('manifest v4 and attestation v3', () => {
     expect(readerReleaseFileDescriptorSchema.parse(validBinaryFileDescriptor)).toEqual(validBinaryFileDescriptor);
   });
 
+  it.each(['jade.avif', 'jade.jpeg', 'jade.jpg', 'jade.png', 'jade.SVG', 'jade.WEBP'])(
+    'rejects the unsupported or non-canonical image descriptor extension %s',
+    (outputName) => {
+      expect(() => readerReleaseFileDescriptorSchema.parse({
+        ...validBinaryFileDescriptor,
+        path: `public/images/book-release/${outputName}`,
+      })).toThrow();
+    },
+  );
+
   it('requires the exact strict file descriptor and validates kind, length and SHA', () => {
     for (const descriptor of [validBinaryFileDescriptor, validEntryFileDescriptor]) {
       for (const key of Object.keys(descriptor)) {
@@ -421,7 +493,32 @@ describe('manifest v4 and attestation v3', () => {
     expect(() => readerReleaseFileDescriptorSchema.parse({ ...validEntryFileDescriptor, kind: 'binary' })).toThrow();
     expect(() => readerReleaseFileDescriptorSchema.parse({ ...validEntryFileDescriptor, byteLength: -1 })).toThrow();
     expect(() => readerReleaseFileDescriptorSchema.parse({ ...validEntryFileDescriptor, byteLength: 1.5 })).toThrow();
+    expect(() => readerReleaseFileDescriptorSchema.parse({
+      ...validEntryFileDescriptor,
+      byteLength: (64 * 1024 * 1024) + 1,
+    })).toThrow(/size|bound|less|equal|number/iu);
     expect(() => readerReleaseFileDescriptorSchema.parse({ ...validEntryFileDescriptor, sha256: 'ABC' })).toThrow();
+  });
+
+  it('rejects a manifest whose bounded descriptors exceed the aggregate byte budget', () => {
+    const files = validManifest.files.map((file) => ({ ...file, byteLength: 64 * 1024 * 1024 }));
+    expect(() => readerReleaseManifestSchema.parse({ ...validManifest, files }))
+      .toThrow(/aggregate|total|size|bound|bytes/iu);
+  });
+
+  it('rejects a manifest exceeding the bounded descriptor count', () => {
+    const notes = Array.from({ length: 10_000 }, (_, index) => ({
+      path: `src/content/book-release/notes/note-limit-${String(index).padStart(5, '0')}.json`,
+      kind: 'text' as const,
+      byteLength: 1,
+      sha256: 'a'.repeat(64),
+    }));
+    const files = [validEntryFileDescriptor, ...notes];
+    expect(() => readerReleaseManifestSchema.parse({
+      ...validManifest,
+      counts: { entries: 1, notes: notes.length, sources: 0, objects: 0, media: 0 },
+      files,
+    })).toThrow(/descriptor count|file count|too many|maximum entries|array/iu);
   });
 
   it.each([
@@ -554,6 +651,25 @@ describe('manifest v4 and attestation v3', () => {
 });
 
 describe('production reader collection loaders', () => {
+  it.each([
+    ['POSIX parent', '../outside.json', '/'],
+    ['Windows parent', '..\\outside.json', '\\'],
+    ['exact POSIX parent', '..', '/'],
+    ['exact Windows parent', '..', '\\'],
+    ['POSIX absolute', '/outside.json', '/'],
+    ['Windows drive absolute', 'C:\\outside.json', '\\'],
+  ] as const)('rejects a host-independent %s watcher-relative path', (_label, relativePath, separator) => {
+    expect(isReaderWatcherRelativePathInsideRoot(relativePath, separator)).toBe(false);
+  });
+
+  it.each([
+    ['POSIX child', 'notes/note-001.json', '/'],
+    ['Windows child', 'notes\\note-001.json', '\\'],
+    ['root itself', '', '/'],
+  ] as const)('accepts a host-independent safe %s watcher-relative path', (_label, relativePath, separator) => {
+    expect(isReaderWatcherRelativePathInsideRoot(relativePath, separator)).toBe(true);
+  });
+
   it('wires aggregate wrappers around the official glob loaders', async () => {
     const config = await readFile(join(process.cwd(), 'src/content.config.ts'), 'utf8');
     expect(config).toContain('withReaderEntryValidation(glob(');
@@ -710,6 +826,69 @@ describe('production reader collection loaders', () => {
     }
   });
 
+  it('rejects a raw JSON collection above the aggregate byte budget before reading any member', async () => {
+    const factories = await loadFactories();
+    const tree = await createReleaseTree();
+    const notesDirectory = join(tree.rootPath, 'src/content/book-release/notes');
+    for (let index = 0; index < 33; index += 1) {
+      const path = join(notesDirectory, `note-aggregate-${String(index).padStart(2, '0')}.json`);
+      await writeFile(path, '{}');
+      await truncate(path, 8 * 1024 * 1024);
+    }
+    const probe = await open(join(notesDirectory, 'note-001.json'), 'r');
+    type ReadMethod = (...args: never[]) => Promise<{ bytesRead: number; buffer: unknown }>;
+    const prototype = Object.getPrototypeOf(probe) as { read: ReadMethod };
+    const originalRead = prototype.read;
+    await probe.close();
+    let memberReadStarted = false;
+    prototype.read = async function patchedRead(...args: never[]) {
+      memberReadStarted = true;
+      return originalRead.apply(this, args);
+    };
+    try {
+      const baseLoader: Loader = {
+        name: 'aggregate-note-loader',
+        load: async () => undefined,
+      };
+      await expect(factories.withImmutableReaderCollection(baseLoader, 'notes')
+        .load(createLoaderContext(tree.root)))
+        .rejects.toThrow(/aggregate|total|budget|bound/iu);
+      expect(memberReadStarted).toBe(false);
+    } finally {
+      prototype.read = originalRead;
+      await rm(tree.rootPath, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'closes each raw JSON member handle before invoking the Astro base loader',
+    async () => {
+    const factories = await loadFactories();
+    const tree = await createReleaseTree();
+    const notesDirectory = join(tree.rootPath, 'src/content/book-release/notes');
+    for (let index = 0; index < 24; index += 1) {
+      await writeFile(join(notesDirectory, `note-fd-${String(index).padStart(2, '0')}.json`), '{}');
+    }
+    const descriptorRoot = process.platform === 'linux' ? '/proc/self/fd' : '/dev/fd';
+    const descriptorCountBefore = (await readdir(descriptorRoot)).length;
+    let retainedDescriptorDelta = Number.POSITIVE_INFINITY;
+    try {
+      const baseLoader: Loader = {
+        name: 'bounded-fd-note-loader',
+        load: async () => {
+          retainedDescriptorDelta = (await readdir(descriptorRoot)).length - descriptorCountBefore;
+        },
+      };
+      await expect(factories.withImmutableReaderCollection(baseLoader, 'notes')
+        .load(createLoaderContext(tree.root)))
+        .resolves.toBeUndefined();
+      expect(retainedDescriptorDelta).toBeLessThan(15);
+    } finally {
+      await rm(tree.rootPath, { recursive: true, force: true });
+    }
+    },
+  );
+
   it('rejects raw JSON mutated while its bounded bytes are read', async () => {
     const factories = await loadFactories();
     const tree = await createReleaseTree();
@@ -740,6 +919,37 @@ describe('production reader collection loaders', () => {
       expect(mutated).toBe(true);
     } finally {
       prototype.read = originalRead;
+      await rm(tree.rootPath, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['manifest', 'manifest.json'],
+    ['notes', 'notes/note-001.json'],
+  ] as const)('rejects an atomic raw %s JSON replacement between pre-scan and Astro parsing', async (
+    scope,
+    relativePath,
+  ) => {
+    const factories = await loadFactories();
+    const tree = await createReleaseTree();
+    try {
+      const target = join(tree.rootPath, 'src/content/book-release', relativePath);
+      const replacement = join(tree.rootPath, `${scope}-gap-replacement.json`);
+      await writeFile(replacement, String.raw`{"id":"claim-private","\u0069d":"safe-public-id"}`);
+      const baseLoader: Loader = {
+        name: `gap-${scope}-loader`,
+        load: async ({ store }) => {
+          await rename(replacement, target);
+          const data = scope === 'manifest' ? validManifest : validNote;
+          store.set({ id: scope === 'manifest' ? 'manifest' : validNote.id, data });
+        },
+      };
+      const wrapped = scope === 'manifest'
+        ? factories.withReaderManifestValidation(baseLoader)
+        : factories.withImmutableReaderCollection(baseLoader, 'notes');
+      await expect(wrapped.load(createLoaderContext(tree.root)))
+        .rejects.toThrow(/changed|identity|metadata|snapshot|replace|topology/iu);
+    } finally {
       await rm(tree.rootPath, { recursive: true, force: true });
     }
   });

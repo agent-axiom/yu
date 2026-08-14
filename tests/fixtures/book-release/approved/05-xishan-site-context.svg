@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" role="img" aria-labelledby="title desc">
+  <title id="title">Где был найден золотошвейный нефритовый костюм</title>
+  <desc id="desc">Вложенная схема локаторов: провинция Хэнань, город Юнчэн, горы Манданшань, ханьская гробница Сишань. Это не план гробницы и не масштабная карта.</desc>
+  <defs>
+    <linearGradient id="paper" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f5efdf"/>
+      <stop offset="1" stop-color="#e8ddc6"/>
+    </linearGradient>
+    <linearGradient id="jade" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3e7768"/>
+      <stop offset="1" stop-color="#183e39"/>
+    </linearGradient>
+    <pattern id="grain" width="48" height="48" patternUnits="userSpaceOnUse">
+      <path d="M0 17H48M0 41H48" stroke="#4f493e" stroke-opacity=".045" stroke-width="1"/>
+      <circle cx="11" cy="8" r="1" fill="#4f493e" fill-opacity=".07"/>
+      <circle cx="35" cy="30" r="1" fill="#4f493e" fill-opacity=".05"/>
+    </pattern>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#172d29" flood-opacity=".16"/>
+    </filter>
+  </defs>
+  <rect width="1600" height="1000" fill="url(#paper)"/>
+  <rect width="1600" height="1000" fill="url(#grain)"/>
+  <path d="M70 80H1530M70 920H1530" stroke="#9f7137" stroke-width="2"/>
+  <circle cx="128" cy="122" r="40" fill="none" stroke="#a64536" stroke-width="5"/>
+  <path d="M109 122h38M128 103v38" stroke="#a64536" stroke-width="3" opacity=".9"/>
+  <text x="205" y="132" fill="#173d38" font-family="Georgia, 'Noto Serif', serif" font-size="54" font-weight="700">Где был найден костюм</text>
+  <text x="208" y="180" fill="#655e52" font-family="Arial, 'Noto Sans', sans-serif" font-size="23" letter-spacing="2">ВЛОЖЕННЫЙ ЛОКАТОР КОНТЕКСТА</text>
+
+  <g filter="url(#shadow)">
+    <rect x="115" y="245" width="1370" height="555" rx="38" fill="#efe6d2" stroke="#b99a62" stroke-width="3"/>
+    <rect x="200" y="320" width="1200" height="405" rx="34" fill="#e4eadf" stroke="#6b8a75" stroke-width="3"/>
+    <rect x="300" y="395" width="1000" height="255" rx="30" fill="#c8dbcc" stroke="#45705f" stroke-width="3"/>
+    <rect x="420" y="470" width="760" height="105" rx="26" fill="url(#jade)" stroke="#d6b368" stroke-width="4"/>
+  </g>
+
+  <g font-family="Arial, 'Noto Sans', sans-serif">
+    <circle cx="165" cy="287" r="24" fill="#a64536"/>
+    <text x="157" y="296" fill="#fff9eb" font-size="25" font-weight="700">1</text>
+    <text x="215" y="291" fill="#2b413b" font-size="31" font-weight="700">河南省 · провинция Хэнань</text>
+
+    <circle cx="250" cy="362" r="24" fill="#9f7137"/>
+    <text x="242" y="371" fill="#fff9eb" font-size="25" font-weight="700">2</text>
+    <text x="300" y="366" fill="#2b413b" font-size="31" font-weight="700">永城市 · город Юнчэн</text>
+
+    <circle cx="350" cy="437" r="24" fill="#517867"/>
+    <text x="342" y="446" fill="#fff9eb" font-size="25" font-weight="700">3</text>
+    <text x="400" y="441" fill="#243e37" font-size="31" font-weight="700">芒砀山 · горы Манданшань</text>
+
+    <circle cx="470" cy="522" r="26" fill="#d6b368"/>
+    <text x="462" y="531" fill="#173d38" font-size="25" font-weight="700">4</text>
+    <text x="525" y="533" fill="#fff9eb" font-family="Georgia, 'Noto Serif', serif" font-size="34" font-weight="700">僖山汉墓 · ханьская гробница Сишань</text>
+  </g>
+
+  <path d="M742 674h116" stroke="#a64536" stroke-width="3"/>
+  <text x="800" y="712" text-anchor="middle" fill="#5d574d" font-family="Georgia, 'Noto Serif', serif" font-size="24">Найден в 1986 году</text>
+  <text x="800" y="850" text-anchor="middle" fill="#6a6256" font-family="Arial, 'Noto Sans', sans-serif" font-size="22">Схема показывает иерархию мест. Это не археологический план и не масштабная карта.</text>
+  <text x="800" y="892" text-anchor="middle" fill="#59462b" font-family="Arial, 'Noto Sans', sans-serif" font-size="20">Источник фактов: Henan Museum · Авторская схема · CC BY 4.0</text>
+</svg>

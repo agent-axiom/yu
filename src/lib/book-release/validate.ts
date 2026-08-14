@@ -1,5 +1,5 @@
 import { constants as fileConstants } from 'node:fs';
-import { lstat, open, readdir, type FileHandle } from 'node:fs/promises';
+import { lstat, open, opendir, type FileHandle } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { join, relative, resolve, sep } from 'node:path';
@@ -12,8 +12,10 @@ import { parse, type DefaultTreeAdapterMap } from 'parse5';
 import {
   computeReadingMinutes,
   publicAnchorSchema,
+  readerEntrySchema,
 } from './schemas';
 import { DuplicateJsonKeyError, parseStrictJsonText } from './strict-json';
+import { assertApprovedReaderSvgBytes } from './svg-policy';
 import type { LoadedReaderRelease } from './load';
 
 type MarkdownNode = {
@@ -748,7 +750,10 @@ const runtimeScanRoots = [
   'src/lib/book-release',
   'src/styles/book.css',
 ] as const;
+const generatedReaderContentRoot = 'src/content/book-release';
+const generatedReaderImageRoot = 'public/images/book-release';
 const builtReaderRoot = 'dist/book';
+const builtReaderImageRoot = 'dist/images/book-release';
 const scriptLikeArtifactExtensionNames = [
   'cjs',
   'cts',
@@ -870,6 +875,7 @@ const strictUtf8 = new TextDecoder('utf-8', { fatal: true });
 const maxReleaseFileBytes = 64 * 1024 * 1024;
 const maxReleaseSnapshotBytes = 256 * 1024 * 1024;
 const maxReleaseSnapshotEntries = 100_000;
+const maxReleaseSnapshotDepth = 64;
 const maxSrcdocDepth = 8;
 const maxCssSourceLength = 1_000_000;
 const maxCssNodes = 20_000;
@@ -1706,7 +1712,7 @@ function sameReleaseFileMetadata(left: ReleaseFileMetadata, right: ReleaseFileMe
     && left.ctimeNs === right.ctimeNs;
 }
 
-type ReleaseSnapshotLayer = 'guard' | 'runtime' | 'built';
+type ReleaseSnapshotLayer = 'guard' | 'runtime' | 'generated-content' | 'generated-image' | 'built' | 'built-image';
 
 type ReleaseSnapshotEntry = {
   readonly absolutePath: string;
@@ -1765,8 +1771,26 @@ function releaseSnapshotScopes(): readonly ReleaseSnapshotScope[] {
       directoryGuard: false,
     })),
     {
+      relativePath: generatedReaderContentRoot,
+      layer: 'generated-content',
+      recursive: true,
+      directoryGuard: false,
+    },
+    {
+      relativePath: generatedReaderImageRoot,
+      layer: 'generated-image',
+      recursive: true,
+      directoryGuard: false,
+    },
+    {
       relativePath: builtReaderRoot,
       layer: 'built',
+      recursive: true,
+      directoryGuard: false,
+    },
+    {
+      relativePath: builtReaderImageRoot,
+      layer: 'built-image',
       recursive: true,
       directoryGuard: false,
     },
@@ -1816,10 +1840,9 @@ async function readSingleLinkReleaseFile(
   relativePath: string,
   expected: ReleaseFileMetadata,
   remainingSnapshotBytes: bigint,
-): Promise<{ readonly bytes: Buffer; readonly metadata: ReleaseFileMetadata; readonly handle: FileHandle }> {
+): Promise<{ readonly bytes: Buffer; readonly metadata: ReleaseFileMetadata }> {
   assertReleaseFileMetadata(expected, relativePath);
   const handle = await open(path, fileConstants.O_RDONLY | fileConstants.O_NOFOLLOW);
-  let retained = false;
   try {
     const opened = await handle.stat({ bigint: true });
     assertReleaseFileMetadata(opened, relativePath);
@@ -1856,10 +1879,9 @@ async function readSingleLinkReleaseFile(
     if (!current || !sameReleaseFileMetadata(current, opened)) {
       throw releaseSnapshotChanged(relativePath);
     }
-    retained = true;
-    return { bytes, metadata: opened, handle };
+    return { bytes, metadata: opened };
   } finally {
-    if (!retained) await handle.close();
+    await handle.close();
   }
 }
 
@@ -1878,9 +1900,14 @@ async function captureReleasePath(
   capture: ReleaseSnapshotCapture,
   scope: ReleaseSnapshotScope,
   absolutePath: string,
+  depth: number,
+  retainDirectoryHandle: boolean,
 ): Promise<void> {
   const relativePath = normalizedReleaseRelativePath(capture.projectRoot, absolutePath);
   assertReleasePathSafe(relativePath);
+  if (depth > maxReleaseSnapshotDepth) {
+    throw new Error(`release-layer snapshot exceeds the bounded directory depth: ${relativePath}`);
+  }
   const metadata = await pathMetadata(absolutePath);
   if (!metadata) {
     appendSnapshotEntry(capture, {
@@ -1912,10 +1939,20 @@ async function captureReleasePath(
         metadata: opened,
       });
       if (scope.recursive) {
-        const names = await readdir(absolutePath);
-        names.sort(compareReleasePaths);
-        for (const name of names) {
-          await captureReleasePath(capture, scope, join(absolutePath, name));
+        const directory = await opendir(absolutePath);
+        try {
+          let member;
+          while ((member = await directory.read()) !== null) {
+            await captureReleasePath(
+              capture,
+              scope,
+              join(absolutePath, member.name),
+              depth + 1,
+              false,
+            );
+          }
+        } finally {
+          await directory.close();
         }
       }
       const verified = await handle.stat({ bigint: true });
@@ -1926,7 +1963,7 @@ async function captureReleasePath(
         || !sameReleaseFileMetadata(current, opened)) {
         throw releaseSnapshotChanged(relativePath);
       }
-      if (capture.retainHandles) {
+      if (capture.retainHandles && retainDirectoryHandle) {
         capture.handles.push({ relativePath, metadata: opened, handle });
         retained = true;
       }
@@ -1970,21 +2007,14 @@ async function captureReleasePath(
     remainingSnapshotBytes,
   );
   capture.totalBytes += captured.metadata.size;
-  if (capture.retainHandles) {
-    capture.handles.push({ relativePath, metadata: captured.metadata, handle: captured.handle });
-  }
-  try {
-    appendSnapshotEntry(capture, {
-      absolutePath,
-      relativePath,
-      layer: scope.layer,
-      kind: 'file',
-      metadata: captured.metadata,
-      bytes: captured.bytes,
-    });
-  } finally {
-    if (!capture.retainHandles) await captured.handle.close();
-  }
+  appendSnapshotEntry(capture, {
+    absolutePath,
+    relativePath,
+    layer: scope.layer,
+    kind: 'file',
+    metadata: captured.metadata,
+    bytes: captured.bytes,
+  });
 }
 
 async function closeReleaseSnapshot(snapshot: ReleaseSnapshot): Promise<void> {
@@ -2010,7 +2040,7 @@ async function captureReleaseSnapshot(
       const absolutePath = scope.relativePath === '.'
         ? projectRoot
         : join(projectRoot, ...scope.relativePath.split('/'));
-      await captureReleasePath(capture, scope, absolutePath);
+      await captureReleasePath(capture, scope, absolutePath, 0, true);
     }
     capture.entries.sort((left, right) => compareReleasePaths(left.relativePath, right.relativePath));
     return { entries: capture.entries, handles: capture.handles };
@@ -2040,7 +2070,11 @@ function assertReleaseSnapshotsEqual(expected: ReleaseSnapshot, current: Release
       || (before.metadata === null) !== (after.metadata === null)
       || (before.metadata !== null
         && after.metadata !== null
-        && !sameReleaseFileMetadata(before.metadata, after.metadata))) {
+        && !sameReleaseFileMetadata(before.metadata, after.metadata))
+      || (before.bytes === undefined) !== (after.bytes === undefined)
+      || (before.bytes !== undefined
+        && after.bytes !== undefined
+        && !before.bytes.equals(after.bytes))) {
       throw new Error(`release-layer snapshot manifest tree changed: ${before.relativePath}`);
     }
   }
@@ -2489,6 +2523,67 @@ function scanBuiltSnapshotEntry(entry: ReleaseSnapshotEntry): void {
   }
 }
 
+function scanGeneratedContentSnapshotEntry(entry: ReleaseSnapshotEntry): void {
+  if (entry.kind !== 'file' || !entry.bytes) return;
+  if (/\.md$/iu.test(entry.relativePath)) {
+    let markdown: string;
+    try {
+      markdown = strictUtf8.decode(entry.bytes);
+    } catch (error) {
+      throw new Error(`${entry.relativePath} is not valid UTF-8 generated Markdown`, { cause: error });
+    }
+    const prefix = '---\n';
+    const closingMarker = '\n---\n';
+    const closingOffset = markdown.indexOf(closingMarker, prefix.length);
+    if (!markdown.startsWith(prefix) || closingOffset < 0) {
+      throw new Error(`${entry.relativePath} must use exact JSON-object frontmatter delimiters`);
+    }
+    const frontmatter = markdown.slice(prefix.length, closingOffset + 1);
+    const body = markdown.slice(closingOffset + closingMarker.length);
+    try {
+      const parsedFrontmatter = parseStrictJsonText(frontmatter, `${entry.relativePath} frontmatter`);
+      readerEntrySchema.parse(parsedFrontmatter);
+      const sentinel = jsonSourceSentinel(frontmatter, `${entry.relativePath} frontmatter`);
+      if (sentinel) {
+        throw new Error(`forbidden generated frontmatter sentinel (${sentinel})`);
+      }
+    } catch (error) {
+      throw new Error(`${entry.relativePath} contains invalid generated JSON frontmatter`, { cause: error });
+    }
+    assertReaderMarkdownSafe(body);
+    return;
+  }
+  if (!/\.json$/iu.test(entry.relativePath)) {
+    scanBuiltSnapshotEntry(entry);
+    return;
+  }
+  let contents: string;
+  try {
+    contents = strictUtf8.decode(entry.bytes);
+  } catch (error) {
+    throw new Error(`${entry.relativePath} is not valid UTF-8 generated JSON`, { cause: error });
+  }
+  let sentinel: string | null;
+  try {
+    sentinel = jsonSourceSentinel(contents, entry.relativePath);
+  } catch (error) {
+    throw new Error(`${entry.relativePath} contains invalid generated JSON`, { cause: error });
+  }
+  if (sentinel) {
+    throw new Error(`${entry.relativePath} contains a forbidden generated JSON sentinel (${sentinel})`);
+  }
+}
+
+function scanReaderImageSnapshotEntry(entry: ReleaseSnapshotEntry): void {
+  if (entry.kind !== 'file' || !entry.bytes) return;
+  if (/\.svg$/u.test(entry.relativePath)) {
+    assertApprovedReaderSvgBytes(entry.bytes, entry.relativePath);
+    return;
+  }
+  if (/\.webp$/u.test(entry.relativePath)) return;
+  throw new Error(`${entry.relativePath} has an unexpected reader static image extension`);
+}
+
 export async function scanReaderReleaseLayers(
   root: string | URL,
   options: ReaderReleaseScanOptions = {},
@@ -2504,12 +2599,35 @@ export async function scanReaderReleaseLayers(
     const { loadValidatedReaderRelease } = await import('./load');
     await loadValidatedReaderRelease(projectRoot);
     for (const entry of snapshot.entries) {
+      if (entry.layer !== 'generated-content' || entry.kind !== 'file') continue;
+      scanGeneratedContentSnapshotEntry(entry);
+      await options.afterEntryScan?.(entry.relativePath);
+    }
+    for (const entry of snapshot.entries) {
       if (entry.layer !== 'built' || entry.kind !== 'file') continue;
       scanBuiltSnapshotEntry(entry);
       await options.afterEntryScan?.(entry.relativePath);
     }
+    const generatedImages = new Map<string, Buffer>();
+    for (const entry of snapshot.entries) {
+      if (entry.layer !== 'generated-image' || entry.kind !== 'file' || !entry.bytes) continue;
+      scanReaderImageSnapshotEntry(entry);
+      const name = entry.relativePath.slice(`${generatedReaderImageRoot}/`.length);
+      generatedImages.set(name, entry.bytes);
+      await options.afterEntryScan?.(entry.relativePath);
+    }
+    for (const entry of snapshot.entries) {
+      if (entry.layer !== 'built-image' || entry.kind !== 'file' || !entry.bytes) continue;
+      scanReaderImageSnapshotEntry(entry);
+      const name = entry.relativePath.slice(`${builtReaderImageRoot}/`.length);
+      const sourceBytes = generatedImages.get(name);
+      if (!sourceBytes || !sourceBytes.equals(entry.bytes)) {
+        throw new Error(`${entry.relativePath} is not an exact same-name generated image copy`);
+      }
+      await options.afterEntryScan?.(entry.relativePath);
+    }
     await assertSnapshotHandlesUnchanged(snapshot);
-    const current = await captureReleaseSnapshot(projectRoot, false, false);
+    const current = await captureReleaseSnapshot(projectRoot, true, false);
     assertReleaseSnapshotsEqual(snapshot, current);
     await assertSnapshotHandlesUnchanged(snapshot);
   } finally {

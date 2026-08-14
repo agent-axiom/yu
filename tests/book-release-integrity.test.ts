@@ -24,6 +24,7 @@ import {
 import { loadValidatedReaderRelease } from '../src/lib/book-release/load';
 import { EXPECTED_READER_ENTRY_ORDER } from '../src/lib/book-release/routes';
 import { readerReleaseManifestSchema } from '../src/lib/book-release/schemas';
+import { APPROVED_READER_SVG_DIGESTS } from '../src/lib/book-release/svg-policy';
 import { scanReaderReleaseLayers } from '../src/lib/book-release/validate';
 import {
   agentReviewDisclosure,
@@ -131,10 +132,7 @@ function stableJson(value: unknown): string {
 }
 
 function serializeEntry(data: JsonObject, body: string): string {
-  const frontmatter = Object.entries(data)
-    .map(([key, value]) => `${key}: ${JSON.stringify(value)}`)
-    .join('\n');
-  return `---\n${frontmatter}\n---\n${body.trim()}\n`;
+  return `---\n${stableJson(data)}---\n${body.trim()}\n`;
 }
 
 const source = {
@@ -314,6 +312,35 @@ async function rebindManifest(root: string, mutate?: (manifest: JsonObject) => v
   return writeBoundManifest(root, manifest);
 }
 
+async function replaceSyntheticReleaseImage(
+  release: SyntheticRelease,
+  outputName: string,
+  bytes: Uint8Array,
+): Promise<void> {
+  const previousPath = 'public/images/book-release/jade-suit.webp';
+  const nextPath = `public/images/book-release/${outputName}`;
+  await unlink(release.imagePath);
+  await writePayload(release.root, nextPath, bytes);
+  await writeFile(
+    join(release.root, 'src/content/book-release/media/media-jade-suit.json'),
+    stableJson({
+      ...media,
+      outputName,
+      kind: 'authored-diagram',
+      author: 'agent-axiom',
+      changeNote: 'Авторская схема для публичного ридера.',
+    }),
+  );
+  await rebindManifest(release.root, (manifest) => {
+    const descriptor = (manifest.files as Array<JsonObject>)
+      .find((file) => file.path === previousPath)!;
+    descriptor.path = nextPath;
+    (manifest.files as Array<JsonObject>)
+      .sort((left, right) => compareCodeUnits(left.path as string, right.path as string));
+  });
+  release.imagePath = join(release.root, nextPath);
+}
+
 async function injectHiddenDuplicateJsonValue(
   path: string,
   key: string,
@@ -474,6 +501,22 @@ describe('reader release canonical framing', () => {
 });
 
 describe('validated reader release loading', () => {
+  it('freezes the exact two approved authored SVG digests and no others', async () => {
+    expect(Object.isFrozen(APPROVED_READER_SVG_DIGESTS)).toBe(true);
+    expect(APPROVED_READER_SVG_DIGESTS).toEqual([
+      '9c4401faf995b0bd954379e56087ac818bf35f73657a335f3d91835bd6ba482d',
+      '4c129fe85208d046c53cee25d8309a7069efef7f47e1ceb18885cfdb429117a9',
+    ]);
+    const fixtureNames = ['05-xishan-site-context.svg', '09-pilot-sites-map.svg'];
+    const fixtureDigests = await Promise.all(fixtureNames.map(async (name) =>
+      createHash('sha256').update(await readFile(join(
+        process.cwd(),
+        'tests/fixtures/book-release/approved',
+        name,
+      ))).digest('hex')));
+    expect(fixtureDigests).toEqual(APPROVED_READER_SVG_DIGESTS);
+  });
+
   it('accepts exact raw bytes and builds the immutable three-entry route index', async () => {
     await withRelease(async ({ root }) => {
       const release = await loadValidatedReaderRelease(root);
@@ -490,6 +533,324 @@ describe('validated reader release loading', () => {
       await writeFile(release.imagePath, Buffer.from('RIFF\0claim-private-layer\0\xff', 'latin1'));
       await rebindManifest(release.root);
       await expect(scanReaderReleaseLayers(release.root)).resolves.toBeUndefined();
+    });
+  });
+
+  it.each([
+    '05-xishan-site-context.svg',
+    '09-pilot-sites-map.svg',
+  ])('accepts the exact immutable approved SVG bytes for %s', async (fixtureName) => {
+    await withRelease(async (release) => {
+      const bytes = await readFile(join(
+        process.cwd(),
+        'tests/fixtures/book-release/approved',
+        fixtureName,
+      ));
+      await replaceSyntheticReleaseImage(release, fixtureName, bytes);
+      await expect(scanReaderReleaseLayers(release.root)).resolves.toBeUndefined();
+    });
+  });
+
+  it.each([
+    ['script', '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'],
+    ['external href', '<svg xmlns="http://www.w3.org/2000/svg"><image href="https://evil.example/pixel"/></svg>'],
+    ['private path', '<svg xmlns="http://www.w3.org/2000/svg"><text>/Users/reader/private.md</text></svg>'],
+    ['external paint URL', '<svg xmlns="http://www.w3.org/2000/svg"><rect fill="url(https://evil.example/pixel)"/></svg>'],
+    ['safe but unapproved synthetic bytes', '<svg xmlns="http://www.w3.org/2000/svg"><rect width="1" height="1"/></svg>'],
+  ] as const)('rejects fully rebound generated SVG %s independently of manifest digests', async (_label, svg) => {
+    await withRelease(async (release) => {
+      await replaceSyntheticReleaseImage(release, 'site-context.svg', Buffer.from(svg));
+      await expect(scanReaderReleaseLayers(release.root))
+        .rejects.toThrow(/SVG|approved|allowlist|immutable|digest/iu);
+    });
+  });
+
+  it('rejects an unapproved SVG copied into the built static image scope', async () => {
+    await withRelease(async (release) => {
+      const approved = await readFile(join(
+        process.cwd(),
+        'tests/fixtures/book-release/approved/05-xishan-site-context.svg',
+      ));
+      await replaceSyntheticReleaseImage(release, 'copied.svg', approved);
+      await writePayload(
+        release.root,
+        'dist/images/book-release/copied.svg',
+        '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
+      );
+      await expect(scanReaderReleaseLayers(release.root))
+        .rejects.toThrow(/SVG|approved|allowlist|immutable|digest/iu);
+    });
+  });
+
+  it('accepts an exact approved SVG copied into the built static image scope', async () => {
+    await withRelease(async (release) => {
+      const bytes = await readFile(join(
+        process.cwd(),
+        'tests/fixtures/book-release/approved/05-xishan-site-context.svg',
+      ));
+      await replaceSyntheticReleaseImage(release, 'copied.svg', bytes);
+      await writePayload(release.root, 'dist/images/book-release/copied.svg', bytes);
+      await expect(scanReaderReleaseLayers(release.root)).resolves.toBeUndefined();
+    });
+  });
+
+  it('keeps copied WebP bytes opaque even when they resemble a private text sentinel', async () => {
+    await withRelease(async (release) => {
+      const bytes = Buffer.from('RIFF\0claim-private-layer\0\xff', 'latin1');
+      await writeFile(release.imagePath, bytes);
+      await rebindManifest(release.root);
+      await writePayload(
+        release.root,
+        'dist/images/book-release/jade-suit.webp',
+        bytes,
+      );
+      await expect(scanReaderReleaseLayers(release.root)).resolves.toBeUndefined();
+    });
+  });
+
+  it('rejects an extra opaque WebP without a same-name generated source', async () => {
+    await withRelease(async (release) => {
+      await writePayload(release.root, 'dist/images/book-release/extra.webp', Buffer.from('RIFF'));
+      await expect(scanReaderReleaseLayers(release.root))
+        .rejects.toThrow(/same-name|copy|image|extra|source/iu);
+    });
+  });
+
+  it('rejects a tampered same-name opaque WebP copy', async () => {
+    await withRelease(async (release) => {
+      const bytes = await readFile(release.imagePath);
+      bytes[bytes.byteLength - 1] ^= 1;
+      await writePayload(release.root, 'dist/images/book-release/jade-suit.webp', bytes);
+      await expect(scanReaderReleaseLayers(release.root))
+        .rejects.toThrow(/same-name|exact|copy|image|bytes/iu);
+    });
+  });
+
+  it.each([
+    ['HTML', 'copied.html', '<script>alert(1)</script>'],
+    ['JavaScript', 'copied.js', 'alert(1)'],
+    ['opaque extension', 'copied.bin', 'opaque'],
+    ['uppercase WebP extension', 'copied.WEBP', 'RIFF'],
+    ['uppercase SVG extension', 'copied.SVG', '<svg xmlns="http://www.w3.org/2000/svg"/>'],
+  ])('rejects an unexpected %s file in the built static image scope', async (_label, name, bytes) => {
+    await withRelease(async (release) => {
+      await writePayload(release.root, `dist/images/book-release/${name}`, bytes);
+      await expect(scanReaderReleaseLayers(release.root))
+        .rejects.toThrow(/image|extension|unexpected|static|format/iu);
+    });
+  });
+
+  it.each([
+    ['in-place file mutation', async (release: SyntheticRelease) => {
+      return async () => writeFile(release.notePaths.prologue, '{}\n');
+    }],
+    ['file addition', async (release: SyntheticRelease) => {
+      return async () => writePayload(release.root, 'src/content/book-release/notes/note-added.json', '{}\n');
+    }],
+    ['file removal', async (release: SyntheticRelease) => {
+      return async () => unlink(release.notePaths.prologue);
+    }],
+    ['generated root swap', async (release: SyntheticRelease) => {
+      const contentRoot = join(release.root, 'src/content/book-release');
+      const replacement = join(release.root, '.scanner-fixtures/replacement-content');
+      await mkdir(replacement, { recursive: true });
+      await writeFile(join(replacement, 'manifest.json'), '{}\n');
+      return async () => {
+        await rename(contentRoot, join(release.root, '.scanner-fixtures/original-content'));
+        await rename(replacement, contentRoot);
+      };
+    }],
+    ['atomic file replacement', async (release: SyntheticRelease) => {
+      const replacement = join(release.root, '.scanner-fixtures/replacement-note.json');
+      await mkdir(dirname(replacement), { recursive: true });
+      await writeFile(replacement, '{}\n');
+      return async () => rename(replacement, release.notePaths.prologue);
+    }],
+    ['collection directory swap', async (release: SyntheticRelease) => {
+      const notesRoot = join(release.root, 'src/content/book-release/notes');
+      const replacement = join(release.root, '.scanner-fixtures/replacement-notes');
+      await mkdir(replacement, { recursive: true });
+      await writeFile(join(replacement, 'note-replacement.json'), '{}\n');
+      return async () => {
+        await rename(notesRoot, join(release.root, '.scanner-fixtures/original-notes'));
+        await rename(replacement, notesRoot);
+      };
+    }],
+  ] as const)('rejects a generated release %s after validated load completes', async (_label, prepare) => {
+    await withRelease(async (release) => {
+      const trigger = 'dist/book/zzzz-after-load.html';
+      await writePayload(release.root, trigger, '<main>Jade</main>');
+      const mutate = await prepare(release);
+      let mutated = false;
+      await expect(scanReaderReleaseLayers(release.root, {
+        afterEntryScan: async (relativePath) => {
+          if (!mutated && relativePath === trigger) {
+            mutated = true;
+            await mutate();
+          }
+        },
+      })).rejects.toThrow(/snapshot|tree|identity|metadata|changed|missing|extra/iu);
+      expect(mutated).toBe(true);
+    });
+  });
+
+  it.each([
+    ['in-place mutation restored to exact bytes', async (release: SyntheticRelease) => {
+      const original = await readFile(release.notePaths.prologue);
+      return async () => {
+        await writeFile(release.notePaths.prologue, '{}\n');
+        await writeFile(release.notePaths.prologue, original);
+      };
+    }],
+    ['atomic file swap restored to the original inode', async (release: SyntheticRelease) => {
+      const target = release.notePaths.prologue;
+      const saved = join(release.root, '.scanner-fixtures/saved-note.json');
+      const replacement = join(release.root, '.scanner-fixtures/replacement-note.json');
+      await mkdir(dirname(saved), { recursive: true });
+      await writeFile(replacement, '{}\n');
+      return async () => {
+        await rename(target, saved);
+        await rename(replacement, target);
+        await rename(target, replacement);
+        await rename(saved, target);
+      };
+    }],
+    ['file add then remove', async (release: SyntheticRelease) => {
+      const added = join(release.root, 'src/content/book-release/notes/note-transient.json');
+      return async () => {
+        await writeFile(added, '{}\n');
+        await unlink(added);
+      };
+    }],
+    ['content root swap then restore', async (release: SyntheticRelease) => {
+      const target = join(release.root, 'src/content/book-release');
+      const saved = join(release.root, '.scanner-fixtures/saved-content');
+      const replacement = join(release.root, '.scanner-fixtures/replacement-content');
+      await mkdir(replacement, { recursive: true });
+      return async () => {
+        await rename(target, saved);
+        await rename(replacement, target);
+        await rename(target, replacement);
+        await rename(saved, target);
+      };
+    }],
+    ['collection directory swap then restore', async (release: SyntheticRelease) => {
+      const target = join(release.root, 'src/content/book-release/notes');
+      const saved = join(release.root, '.scanner-fixtures/saved-notes');
+      const replacement = join(release.root, '.scanner-fixtures/replacement-notes');
+      await mkdir(replacement, { recursive: true });
+      return async () => {
+        await rename(target, saved);
+        await rename(replacement, target);
+        await rename(target, replacement);
+        await rename(saved, target);
+      };
+    }],
+    ['public image root swap then restore', async (release: SyntheticRelease) => {
+      const target = join(release.root, 'public/images/book-release');
+      const saved = join(release.root, '.scanner-fixtures/saved-images');
+      const replacement = join(release.root, '.scanner-fixtures/replacement-images');
+      await mkdir(replacement, { recursive: true });
+      return async () => {
+        await rename(target, saved);
+        await rename(replacement, target);
+        await rename(target, replacement);
+        await rename(saved, target);
+      };
+    }],
+  ] as const)('rejects transient generated release %s after validated load', async (_label, prepare) => {
+    await withRelease(async (release) => {
+      const trigger = 'dist/book/zzzz-after-load.html';
+      await writePayload(release.root, trigger, '<main>Jade</main>');
+      const mutateAndRestore = await prepare(release);
+      let mutated = false;
+      await expect(scanReaderReleaseLayers(release.root, {
+        afterEntryScan: async (relativePath) => {
+          if (!mutated && relativePath === trigger) {
+            mutated = true;
+            await mutateAndRestore();
+          }
+        },
+      })).rejects.toThrow(/snapshot|tree|identity|metadata|changed|topology/iu);
+      expect(mutated).toBe(true);
+    });
+  });
+
+  it.each([
+    ['built reader add then remove', async (release: SyntheticRelease) => {
+      await writePayload(release.root, 'dist/book/index.html', '<main>Jade</main>');
+      const transient = join(release.root, 'dist/book/transient.html');
+      return async () => {
+        await writeFile(transient, '<main>Transient</main>');
+        await unlink(transient);
+      };
+    }],
+    ['built reader root swap then restore', async (release: SyntheticRelease) => {
+      const target = join(release.root, 'dist/book');
+      const saved = join(release.root, '.scanner-fixtures/saved-dist-book');
+      const replacement = join(release.root, '.scanner-fixtures/replacement-dist-book');
+      await writePayload(release.root, 'dist/book/index.html', '<main>Jade</main>');
+      await mkdir(replacement, { recursive: true });
+      return async () => {
+        await rename(target, saved);
+        await rename(replacement, target);
+        await rename(target, replacement);
+        await rename(saved, target);
+      };
+    }],
+    ['built image add then remove', async (release: SyntheticRelease) => {
+      const transient = join(release.root, 'dist/images/book-release/transient.webp');
+      return async () => {
+        await mkdir(dirname(transient), { recursive: true });
+        await writeFile(transient, 'RIFF');
+        await unlink(transient);
+        await rm(join(release.root, 'dist'), { recursive: true });
+      };
+    }],
+    ['built image root swap then restore', async (release: SyntheticRelease) => {
+      const target = join(release.root, 'dist/images/book-release');
+      const saved = join(release.root, '.scanner-fixtures/saved-dist-images');
+      const replacement = join(release.root, '.scanner-fixtures/replacement-dist-images');
+      await writePayload(
+        release.root,
+        'dist/images/book-release/jade-suit.webp',
+        await readFile(release.imagePath),
+      );
+      await mkdir(replacement, { recursive: true });
+      return async () => {
+        await rename(target, saved);
+        await rename(replacement, target);
+        await rename(target, replacement);
+        await rename(saved, target);
+      };
+    }],
+  ] as const)('rejects transient %s after validated load', async (_label, prepare) => {
+    await withRelease(async (release) => {
+      const trigger = 'src/content/book-release/entries/chapter-04.md';
+      const mutateAndRestore = await prepare(release);
+      let mutated = false;
+      await expect(scanReaderReleaseLayers(release.root, {
+        afterEntryScan: async (relativePath) => {
+          if (!mutated && relativePath === trigger) {
+            mutated = true;
+            await mutateAndRestore();
+          }
+        },
+      })).rejects.toThrow(/snapshot|tree|identity|metadata|changed|topology/iu);
+      expect(mutated).toBe(true);
+    });
+  });
+
+  it('rejects a fully rebound entry carrying a private sentinel only in raw frontmatter bytes', async () => {
+    await withRelease(async (release) => {
+      const raw = await readFile(release.entryPaths.prologue, 'utf8');
+      await writeFile(
+        release.entryPaths.prologue,
+        raw.replace('---\n', '---\n# research/claims/private.json\n'),
+      );
+      await rebindManifest(release.root);
+      await expect(scanReaderReleaseLayers(release.root))
+        .rejects.toThrow(/frontmatter|JSON|private|sentinel|path/iu);
     });
   });
 
@@ -620,6 +981,96 @@ describe('validated reader release loading', () => {
     });
   });
 
+  it('rejects a sparse payload above the per-file bound before starting its read', async () => {
+    await withRelease(async (release) => {
+      const oversizedBytes = (64 * 1024 * 1024) + 1;
+      await truncate(release.imagePath, oversizedBytes);
+      const manifest = await readManifest(release.root);
+      const descriptor = (manifest.files as Array<JsonObject>)
+        .find((file) => file.path === 'public/images/book-release/jade-suit.webp')!;
+      descriptor.byteLength = oversizedBytes;
+      let oversizedReadStarted = false;
+      await expect(verifyReaderReleaseIntegrity(release.root, manifest as never, {
+        onFileReadStarted: (path) => {
+          if (path === descriptor.path) oversizedReadStarted = true;
+        },
+      })).rejects.toThrow(/size|bound|large|maximum/iu);
+      expect(oversizedReadStarted).toBe(false);
+    });
+  });
+
+  it('rejects an oversized sparse manifest before JSON parsing', async () => {
+    await withRelease(async (release) => {
+      await truncate(release.manifestPath, (64 * 1024 * 1024) + 1);
+      await expect(loadValidatedReaderRelease(release.root))
+        .rejects.toThrow(/manifest.*size|size.*manifest|bound|large|maximum/iu);
+    });
+  });
+
+  it('rejects an aggregate sparse payload above the byte budget before reading payload files', async () => {
+    await withRelease(async (release) => {
+      const manifest = await readManifest(release.root);
+      const descriptors = manifest.files as Array<JsonObject>;
+      for (let index = 0; index < 5; index += 1) {
+        const path = `public/images/book-release/aggregate-${index}.webp`;
+        const absolutePath = join(release.root, path);
+        await writePayload(release.root, path, new Uint8Array());
+        await truncate(absolutePath, 64 * 1024 * 1024);
+        descriptors.push({
+          path,
+          kind: 'binary',
+          byteLength: 64 * 1024 * 1024,
+          sha256: '0'.repeat(64),
+        });
+      }
+      descriptors.sort((left, right) => compareCodeUnits(left.path as string, right.path as string));
+      let payloadReadStarted = false;
+      await expect(verifyReaderReleaseIntegrity(release.root, manifest as never, {
+        onFileReadStarted: (path) => {
+          if (path !== 'src/content/book-release/manifest.json') payloadReadStarted = true;
+        },
+      })).rejects.toThrow(/aggregate|total|size|bound|budget/iu);
+      expect(payloadReadStarted).toBe(false);
+    });
+  });
+
+  it('rejects an over-count manifest before traversing or reading descriptor payloads', async () => {
+    await withRelease(async (release) => {
+      const manifest = await readManifest(release.root);
+      const entryDescriptor = (manifest.files as Array<JsonObject>)
+        .find((file) => file.path === 'src/content/book-release/entries/chapter-04.md')!;
+      manifest.files = [
+        entryDescriptor,
+        ...Array.from({ length: 10_000 }, (_, index) => ({
+          path: `src/content/book-release/notes/note-limit-${String(index).padStart(5, '0')}.json`,
+          kind: 'text',
+          byteLength: 1,
+          sha256: '0'.repeat(64),
+        })),
+      ];
+      let payloadReadStarted = false;
+      await expect(verifyReaderReleaseIntegrity(release.root, manifest as never, {
+        onFileReadStarted: (path) => {
+          if (path !== 'src/content/book-release/manifest.json') payloadReadStarted = true;
+        },
+      })).rejects.toThrow(/descriptor count|file count|too many|maximum entries/iu);
+      expect(payloadReadStarted).toBe(false);
+    });
+  });
+
+  it('rejects an over-count generated topology made only of empty directories', async () => {
+    await withRelease(async (release) => {
+      const emptyRoot = join(release.root, 'src/content/book-release/empty-topology');
+      await mkdir(emptyRoot, { recursive: true });
+      for (let offset = 0; offset < 10_001; offset += 250) {
+        await Promise.all(Array.from({ length: Math.min(250, 10_001 - offset) }, (_, index) =>
+          mkdir(join(emptyRoot, `dir-${String(offset + index).padStart(5, '0')}`))));
+      }
+      await expect(loadValidatedReaderRelease(release.root))
+        .rejects.toThrow(/topology|entry count|too many|maximum/iu);
+    });
+  }, 30_000);
+
   it('rejects a non-regular descriptor target', async () => {
     await withRelease(async (release) => {
       await unlink(release.imagePath);
@@ -733,12 +1184,12 @@ describe('validated reader release loading', () => {
     });
   });
 
-  it('rejects mutation of an early file while a later 128 MiB file read is in flight', async () => {
+  it('rejects mutation of an early file while a later 32 MiB file read is in flight', async () => {
     await withRelease(async (release) => {
       const latePath = 'public/images/book-release/zzzz-race.webp';
       const lateAbsolutePath = join(release.root, latePath);
       await writePayload(release.root, latePath, new Uint8Array());
-      await truncate(lateAbsolutePath, 128 * 1024 * 1024);
+      await truncate(lateAbsolutePath, 32 * 1024 * 1024);
       const manifestJson = await rebindManifest(release.root, (manifest) => {
         (manifest.files as Array<JsonObject>).push({
           path: latePath,
@@ -928,7 +1379,7 @@ describe('reader release relationship contract', () => {
   it('rejects stale readingMinutes after a content-preserving rebind', async () => {
     await withRelease(async (release) => {
       const raw = await readFile(release.entryPaths.prologue, 'utf8');
-      await writeFile(release.entryPaths.prologue, raw.replace('readingMinutes: 1', 'readingMinutes: 2'));
+      await writeFile(release.entryPaths.prologue, raw.replace('"readingMinutes": 1', '"readingMinutes": 2'));
       await rebindManifest(release.root);
       await expect(loadValidatedReaderRelease(release.root)).rejects.toThrow(/reading minutes/iu);
     });
