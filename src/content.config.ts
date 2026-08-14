@@ -19,14 +19,15 @@ const sources = defineCollection({
   schema: z.object({
     title: z.string(),
     authors: z.array(z.string()).min(1),
-    year: z.number(),
+    publicationYear: z.number().int().min(1).max(2100).nullable(),
     publisher: z.string(),
+    locator: z.string().min(1).optional(),
     url: z.string().url(),
     region: z.enum(['asia', 'west', 'global']),
     kind: z.enum(['paper', 'museum', 'book', 'institution']),
     license: z.string().optional(),
-    accessed: z.string(),
-  }),
+    accessed: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u),
+  }).strict(),
 });
 
 const eras = defineCollection({

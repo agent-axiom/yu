@@ -2,7 +2,10 @@
 import { getCollection } from 'astro:content';
 import BaseLayout from '../layouts/BaseLayout.astro';
 
-const sources = (await getCollection('sources')).sort((a, b) => b.data.year - a.data.year || a.data.title.localeCompare(b.data.title));
+const sources = (await getCollection('sources')).sort((a, b) => {
+  const yearOrder = (b.data.publicationYear ?? -Infinity) - (a.data.publicationYear ?? -Infinity);
+  return yearOrder || a.data.title.localeCompare(b.data.title);
+});
 const groups = [
   { kind: 'paper', title: 'Рецензируемые статьи', note: 'Археология, минералогия и исследования на людях.' },
   { kind: 'museum', title: 'Музейные коллекции', note: 'Карточки предметов, каталоги и кураторские исследования.' },
@@ -49,8 +52,8 @@ const regionLabel = { asia: 'Азиатская перспектива', west: '
           <header><h3 id={`group-${group.kind}`}>{group.title}</h3><p>{group.note}</p><span>{groupSources.length.toString().padStart(2, '0')}</span></header>
           <ol>{groupSources.map((source) => (
             <li>
-              <div class="source-year">{source.data.year}</div>
-              <div><p class="source-region">{regionLabel[source.data.region]}</p><h4>{source.data.title}</h4><p>{source.data.authors.join(', ')}</p><p>{source.data.publisher}</p></div>
+              <div class="source-year">{source.data.publicationYear ?? 'б. д.'}</div>
+              <div><p class="source-region">{regionLabel[source.data.region]}</p><h4>{source.data.title}</h4><p>{source.data.authors.join(', ')}</p><p>{source.data.publisher}{source.data.locator && ` · ${source.data.locator}`}</p></div>
               <div class="source-actions"><span>Обращение: {source.data.accessed}</span>{source.data.license && <span>{source.data.license}</span>}<a href={source.data.url} target="_blank" rel="noreferrer">Открыть ↗</a></div>
             </li>
           ))}</ol>

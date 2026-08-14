@@ -2,8 +2,9 @@
 interface SourceData {
   title: string;
   authors: string[];
-  year: number;
+  publicationYear: number | null;
   publisher: string;
+  locator?: string;
   url: string;
   kind: string;
 }
@@ -25,7 +26,7 @@ const { source, marker = '↗' } = Astro.props;
     <p class="source-ref__kind">{source.kind}</p>
     <p><strong>{source.title}</strong></p>
     <p>{source.authors.join(', ')}</p>
-    <p>{source.publisher}, {source.year}</p>
+    <p>{source.publisher}{source.locator && ` · ${source.locator}`} · {source.publicationYear ?? 'год публикации не указан'}</p>
     <a href={source.url} target="_blank" rel="noreferrer">Открыть публикацию <span aria-hidden="true">↗</span></a>
   </div>
 </details>
