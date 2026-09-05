@@ -1,6 +1,7 @@
 ---
 import { getCollection } from 'astro:content';
 import MythExplorer from '../components/MythExplorer.astro';
+import LegendHistory from '../components/LegendHistory.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import { withBase } from '../lib/urls';
 
@@ -23,6 +24,8 @@ const orderedMyths = myths.sort((a, b) => a.id.localeCompare(b.id));
       <li><span>03</span><div><strong>Что подтверждено</strong><p>Предметы, тексты и границы знания.</p></div></li>
     </ol>
   </section>
+
+  <LegendHistory />
 
   <section class="section page-shell section-rule" aria-label="Мифологические сюжеты">
     <MythExplorer myths={orderedMyths} sources={sources} />

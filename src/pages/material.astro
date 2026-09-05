@@ -8,6 +8,7 @@ import { withBase } from '../lib/urls';
 const [materials, sources] = await Promise.all([getCollection('materials'), getCollection('sources')]);
 const sourceMap = new Map(sources.map((entry) => [entry.id, entry.data]));
 const gia = sourceMap.get('gia-jade-2026');
+const care = sourceMap.get('gia-care-2026');
 const feng = sourceMap.get('feng-nephrite-2017');
 ---
 
@@ -17,9 +18,13 @@ const feng = sourceMap.get('feng-nephrite-2017');
     <div class="formula" aria-label="Химические формулы"><p><span>Нефрит</span>Ca₂(Mg,Fe)₅Si₈O₂₂(OH)₂</p><p><span>Жадеит</span>NaAlSi₂O₆</p></div>
   </header>
 
-  <section class="section page-shell section-rule" aria-labelledby="lens-title">
+  <section id="material-lens" class="section page-shell section-rule" aria-labelledby="lens-title">
     <div class="lens-head"><div><p class="eyebrow">Интерактивная линза</p><h2 id="lens-title" class="title">Структура решает</h2></div><p>Цвет может обмануть. Устойчивость к сколу рождается не просто из твёрдости, а из того, как кристаллы сцеплены друг с другом.{gia && <SourceRef source={gia} />}</p></div>
     <MaterialLens materials={materials} />
+    <div class="material-properties" aria-label="Твёрдость и вязкость — разные свойства">
+      <div><p class="eyebrow">Царапина</p><h3>Твёрдость</h3><p>Сопротивление царапанию. Шкала Мооса сравнивает, какой минерал может поцарапать другой; её ступени не равны по величине.</p></div>
+      <div><p class="eyebrow">Скол</p><h3>Вязкость</h3><p>Сопротивление разрушению и сколам. Оба материала очень вязкие благодаря сцеплению кристаллов. Более высокая твёрдость не означает большую стойкость к удару.{care && <SourceRef source={care} />}</p></div>
+    </div>
   </section>
 
   <section class="section diagnosis" aria-labelledby="diagnosis-title">
@@ -38,6 +43,13 @@ const feng = sourceMap.get('feng-nephrite-2017');
   .formula span { display: block; margin-bottom: .4rem; color: var(--jade); font-family: var(--sans); font-size: .68rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
   .lens-head { display: grid; margin-bottom: 3rem; grid-template-columns: 1fr .7fr; gap: 5rem; }
   .lens-head > p { color: rgba(220,232,223,.66); }
+  #material-lens { scroll-margin-top: 6rem; }
+  .material-properties { display: grid; grid-template-columns: 1fr 1fr; margin-top: 2.5rem; border: 1px solid var(--line); }
+  .material-properties > div { padding: clamp(1.2rem,3vw,2.5rem); }
+  .material-properties > div + div { border-left: 1px solid var(--line); }
+  .material-properties .eyebrow { margin-bottom: .5rem; }
+  .material-properties h3 { margin: 0 0 .8rem; color: var(--paper); font-family: var(--serif); font-size: 1.8rem; font-weight: 400; }
+  .material-properties p:not(.eyebrow) { margin: 0; color: rgba(220,232,223,.75); }
   .diagnosis { background: var(--paper); color: var(--ink); }
   .diagnosis__grid { display: grid; grid-template-columns: .85fr 1.15fr; gap: clamp(2rem,8vw,8rem); align-items: center; }
   .diagnosis img { width: 100%; aspect-ratio: 4/5; object-fit: cover; }
@@ -46,5 +58,5 @@ const feng = sourceMap.get('feng-nephrite-2017');
   .diagnosis .lede { color: rgba(7,17,15,.72); }
   .diagnosis li { margin: .6rem 0; }
   .warning { margin-top: 2rem; padding: 1.2rem; border-left: 3px solid #9b6d2d; background: rgba(213,168,102,.18); }
-  @media (max-width: 760px) { .material-hero, .lens-head, .diagnosis__grid { grid-template-columns: 1fr; } .material-hero { gap: 2rem; } .formula { border-left: 0; border-top: 1px solid var(--line); padding: 1rem 0 0; } }
+  @media (max-width: 760px) { .material-hero, .lens-head, .diagnosis__grid, .material-properties { grid-template-columns: 1fr; } .material-hero { gap: 2rem; } .formula { border-left: 0; border-top: 1px solid var(--line); padding: 1rem 0 0; } .material-properties > div + div { border-left: 0; border-top: 1px solid var(--line); } }
 </style>

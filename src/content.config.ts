@@ -1,5 +1,16 @@
 import { defineCollection, z } from 'astro:content';
 import { glob } from 'astro/loaders';
+import {
+  readerEntrySchema,
+  readerMediaSchema,
+  readerNoteSchema,
+  readerObjectSchema,
+  readerReleaseManifestSchema,
+  readerSourceSchema,
+  withImmutableReaderCollection,
+  withReaderEntryValidation,
+  withReaderManifestValidation,
+} from './lib/book-release/schemas';
 
 const citations = z.array(z.string()).min(1);
 
@@ -8,14 +19,15 @@ const sources = defineCollection({
   schema: z.object({
     title: z.string(),
     authors: z.array(z.string()).min(1),
-    year: z.number(),
+    publicationYear: z.number().int().min(1).max(2100).nullable(),
     publisher: z.string(),
+    locator: z.string().min(1).optional(),
     url: z.string().url(),
     region: z.enum(['asia', 'west', 'global']),
     kind: z.enum(['paper', 'museum', 'book', 'institution']),
     license: z.string().optional(),
-    accessed: z.string(),
-  }),
+    accessed: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u),
+  }).strict(),
 });
 
 const eras = defineCollection({
@@ -71,4 +83,58 @@ const medicine = defineCollection({
   }),
 });
 
-export const collections = { sources, eras, myths, materials, medicine };
+const bookManifest = defineCollection({
+  loader: withReaderManifestValidation(glob({ pattern: 'manifest.json', base: './src/content/book-release' })),
+  schema: readerReleaseManifestSchema,
+});
+
+const bookEntries = defineCollection({
+  loader: withReaderEntryValidation(glob({ pattern: '*.md', base: './src/content/book-release/entries' })),
+  schema: readerEntrySchema,
+});
+
+const bookNotes = defineCollection({
+  loader: withImmutableReaderCollection(
+    glob({ pattern: '*.json', base: './src/content/book-release/notes' }),
+    'notes',
+  ),
+  schema: readerNoteSchema,
+});
+
+const bookSources = defineCollection({
+  loader: withImmutableReaderCollection(
+    glob({ pattern: '*.json', base: './src/content/book-release/sources' }),
+    'sources',
+  ),
+  schema: readerSourceSchema,
+});
+
+const bookObjects = defineCollection({
+  loader: withImmutableReaderCollection(
+    glob({ pattern: '*.json', base: './src/content/book-release/objects' }),
+    'objects',
+  ),
+  schema: readerObjectSchema,
+});
+
+const bookMedia = defineCollection({
+  loader: withImmutableReaderCollection(
+    glob({ pattern: '*.json', base: './src/content/book-release/media' }),
+    'media',
+  ),
+  schema: readerMediaSchema,
+});
+
+export const collections = {
+  sources,
+  eras,
+  myths,
+  materials,
+  medicine,
+  bookManifest,
+  bookEntries,
+  bookNotes,
+  bookSources,
+  bookObjects,
+  bookMedia,
+};
