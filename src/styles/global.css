@@ -1,5 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Prata&display=swap');
-
 :root {
   color-scheme: dark;
   --ink: #07110f;
@@ -91,6 +89,7 @@ button, input { font: inherit; }
   min-height: 6.5rem;
   align-items: center;
   justify-content: space-between;
+  gap: 1rem;
   border-bottom: 1px solid var(--line);
   transform: translateX(-50%);
 }
@@ -99,11 +98,15 @@ button, input { font: inherit; }
 .brand__mark { grid-row: 1 / 3; font-family: var(--serif); font-size: 2.2rem; color: var(--jade); }
 .brand__name { font-weight: 700; letter-spacing: 0.18em; line-height: 1; }
 .brand__descriptor { color: rgba(220,232,223,.62); font-size: .67rem; letter-spacing: .12em; text-transform: uppercase; }
-.site-nav__links { display: flex; gap: clamp(1rem, 2.2vw, 2.2rem); align-items: center; }
+.site-nav__links { display: flex; gap: clamp(.7rem, 1.4vw, 1.4rem); align-items: center; }
 .site-nav__links a { position: relative; font-size: var(--step--1); font-weight: 600; text-decoration: none; }
 .site-nav__links a::after { position: absolute; right: 0; bottom: -0.6rem; left: 0; height: 1px; content: ''; background: var(--jade); transform: scaleX(0); transition: transform .35s var(--ease-out); }
 .site-nav__links a:hover::after, .site-nav__links a[aria-current='page']::after { transform: scaleX(1); }
 .site-nav__toggle { display: none; border: 0; color: var(--mist); background: none; }
+.language-switch { display: flex; flex-shrink: 0; align-items: center; gap: .15rem; font-size: .72rem; color: rgba(220,232,223,.5); }
+.language-switch a { display: inline-flex; min-width: 2.25rem; min-height: 2.75rem; align-items: center; justify-content: center; text-decoration: none; }
+.language-switch a[aria-current] { color: var(--jade-bright); font-weight: 800; }
+.language-switch__name { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
 main { min-height: 75vh; }
 .page-shell { width: var(--page); margin-inline: auto; }
@@ -142,14 +145,29 @@ main { min-height: 75vh; }
 .js .reveal { opacity: 0; transform: translateY(2rem); transition: opacity .8s var(--ease-out), transform .8s var(--ease-out); }
 .js .reveal.is-visible { opacity: 1; transform: none; }
 
-@media (max-width: 900px) {
-  .site-nav__toggle { display: inline-flex; gap: .75rem; align-items: center; cursor: pointer; }
+@media (max-width: 1080px) {
+  .site-nav { position: relative; left: auto; margin-inline: auto; flex-wrap: wrap; transform: none; }
+  .js .site-nav { position: absolute; left: 50%; transform: translateX(-50%); }
+  .brand { margin-right: auto; }
+  .language-switch { order: 1; }
+  .site-nav__toggle { order: 2; min-height: 2.75rem; }
+  .js .site-nav__toggle { display: inline-flex; gap: .75rem; align-items: center; cursor: pointer; }
   .site-nav__toggle-mark { width: 1.5rem; height: .75rem; border-block: 1px solid currentColor; }
-  .site-nav__links { position: absolute; top: calc(100% + .1rem); right: 0; display: none; min-width: 15rem; flex-direction: column; align-items: stretch; padding: 1.2rem; border: 1px solid var(--line); background: rgba(7,17,15,.97); box-shadow: 0 1rem 3rem rgba(0,0,0,.35); }
-  .site-nav__links[data-open] { display: flex; }
+  .site-nav__links { order: 3; width: 100%; flex-wrap: wrap; padding-bottom: 1rem; }
+  .js .site-nav__links { position: absolute; top: calc(100% + .1rem); right: 0; display: none; width: auto; min-width: 15rem; flex-direction: column; align-items: stretch; padding: 1.2rem; border: 1px solid var(--line); background: rgba(7,17,15,.97); box-shadow: 0 1rem 3rem rgba(0,0,0,.35); }
+  .js .site-nav__links[data-open] { display: flex; }
   .site-nav__links a { padding: .65rem; }
+}
+
+@media (max-width: 900px) {
   .editorial-grid { grid-template-columns: 1fr; }
   .card-grid { grid-template-columns: 1fr 1fr; }
+}
+
+@media (max-width: 760px) {
+  .timeline__sources, .myth footer, .evidence-panel footer { flex-wrap: wrap; }
+  .source-ref[open] { display: block; flex: 1 1 100%; min-width: 0; max-width: 100%; margin-left: 0; }
+  .source-ref__card { position: static; width: min(20rem, 100%); max-width: 100%; margin-top: .7rem; overflow-wrap: anywhere; }
 }
 
 @media (max-width: 640px) {

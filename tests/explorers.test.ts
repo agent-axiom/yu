@@ -13,4 +13,11 @@ describe('content explorers', () => {
     expect(clampLens(45)).toBe(45);
     expect(clampLens(120)).toBe(100);
   });
+
+  it('labels every English myth layer without changing the Russian default', () => {
+    expect(mythLayerLabel('legend', 'en')).toBe('Legend');
+    expect(mythLayerLabel('context', 'en')).toBe('Cultural context');
+    expect(mythLayerLabel('confirmed', 'en')).toBe('What is supported');
+    expect(mythLayerLabel('legend', 'ru')).toBe('Легенда');
+  });
 });

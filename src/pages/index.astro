@@ -3,17 +3,27 @@ import { getCollection } from 'astro:content';
 import JadeHero from '../components/JadeHero.astro';
 import RouteCard from '../components/RouteCard.astro';
 import SourceRef from '../components/SourceRef.astro';
+import Term from '../components/Term.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import { evidenceLabel } from '../lib/content';
 import { withBase } from '../lib/urls';
+import { localeFromPath, localizePath, translator } from '../lib/i18n';
+import { localizeCollection } from '../i18n/content';
 
-const [eras, myths, materials, medicine, sources] = await Promise.all([
+const locale = localeFromPath(Astro.url.pathname);
+const t = translator(locale);
+const href = (path: string) => localizePath(path, locale);
+const [eraRecords, mythRecords, materialRecords, medicineRecords, sources] = await Promise.all([
   getCollection('eras'),
   getCollection('myths'),
   getCollection('materials'),
   getCollection('medicine'),
   getCollection('sources'),
 ]);
+const eras = localizeCollection('eras', eraRecords, locale);
+const myths = localizeCollection('myths', mythRecords, locale);
+const materials = localizeCollection('materials', materialRecords, locale);
+const medicine = localizeCollection('medicine', medicineRecords, locale);
 const orderedEras = eras.sort((a, b) => a.data.order - b.data.order);
 const sourceMap = new Map(sources.map((entry) => [entry.id, entry.data]));
 const gia = sourceMap.get('gia-jade-2026');
@@ -21,85 +31,85 @@ const featuredMyth = myths.find(({ id }) => id === '04-maya-breath') ?? myths[0]
 const firstMedical = medicine.find(({ id }) => id === '01-healing-energy') ?? medicine[0];
 ---
 
-<BaseLayout title="Живой нефрит" description="История, мифология, минералогия и медицина нефрита — от древнейших культур до современных доказательств.">
+<BaseLayout title={t('Живой нефрит', 'Living jade')} description={t('История, мифология, минералогия и медицина нефрита — от древнейших культур до современных доказательств.', 'The history, mythology, mineralogy and medical claims of jade — from ancient cultures to modern evidence.')}>
   <JadeHero />
 
   <section class="section page-shell definition reveal" aria-labelledby="definition-title">
-    <p class="eyebrow">Сначала — точность</p>
+    <p class="eyebrow">{t('Сначала — точность', 'First, a distinction')}</p>
     <div class="editorial-grid">
-      <h2 id="definition-title" class="title">Один древний образ. Два разных материала.</h2>
+      <h2 id="definition-title" class="title">{t('Один древний образ. Два разных материала.', 'One ancient idea. Two different materials.')}</h2>
       <div>
-        <p class="lede">Слово «jade» объединяет нефрит и жадеит. Они похожи на взгляд, но различаются химией и кристаллической структурой — а культурная история обоих гораздо шире привычного зелёного цвета.{gia && <SourceRef source={gia} />}</p>
-        <a class="button button--ghost" href={withBase('/material/')}>Увидеть различия</a>
+        <p class="lede">{t('Слово', 'The word')} <Term id="jade">jade</Term> {t('объединяет', 'brings together')} <Term id="nephrite">{t('нефрит', 'nephrite')}</Term> {t('и', 'and')} <Term id="jadeite">{t('жадеит', 'jadeite')}</Term>. {t('Они похожи на взгляд, но различаются химией и кристаллической структурой — а культурная история обоих гораздо шире привычного зелёного цвета.', 'They may look similar, but differ in chemistry and crystal structure — and the cultural history of both extends far beyond their familiar green colour.')}{gia && <SourceRef source={gia} />}</p>
+        <a class="button button--ghost" href={href('/material/')}>{t('Увидеть различия', 'See the differences')}</a>
       </div>
     </div>
   </section>
 
   <section class="section experience-gateway section-rule" aria-labelledby="experience-title">
     <div class="page-shell experience-layout">
-      <div class="experience-intro"><p class="eyebrow">Три способа увидеть больше</p><h2 id="experience-title" class="title">Не только читать.<br /><em>Исследовать.</em></h2><p>Приблизьте предмет. Сопоставьте версии. Загляните внутрь материала.</p><span class="experience-mark" aria-hidden="true">玉</span></div>
-      <nav class="experience-links" aria-label="Интерактивные исследования">
-        <a href={withBase('/history/#object-biography')}><span class="experience-number">01</span><div><span class="experience-kind">Кабинет предмета</span><h3>Один диск. Пять жизней.</h3><p>Музейный снимок с увеличением, биография и честно обозначенные пробелы.</p><span class="experience-action">Рассмотреть ближе <span aria-hidden="true">↗</span></span></div></a>
-        <a href={withBase('/mythology/#legend-history')}><span class="experience-number">02</span><div><span class="experience-kind">Архив легенды</span><h3>Как меняется Хэшиби?</h3><p>Когда происходит история — и когда о ней рассказывают? Сравните свидетельства.</p><span class="experience-action">Открыть досье <span aria-hidden="true">↗</span></span></div></a>
-        <a href={withBase('/material/#material-lens')}><span class="experience-number">03</span><div><span class="experience-kind">Минералогическая линза</span><h3>Волокна или зёрна?</h3><p>Две учебные модели покажут, почему похожие камни устроены по-разному.</p><span class="experience-action">Сдвинуть границу <span aria-hidden="true">↗</span></span></div></a>
+      <div class="experience-intro"><p class="eyebrow">{t('Три способа увидеть больше', 'Three ways to see more')}</p><h2 id="experience-title" class="title">{t('Не только читать.', 'Beyond reading.')}<br /><em>{t('Исследовать.', 'Explore.')}</em></h2><p>{t('Приблизьте предмет. Сопоставьте версии. Загляните внутрь материала.', 'Zoom in on an object. Compare accounts. Look inside a material.')}</p><span class="experience-mark" aria-hidden="true">玉</span></div>
+      <nav class="experience-links" aria-label={t('Интерактивные исследования', 'Interactive explorations')}>
+        <a href={href('/history/#object-biography')}><span class="experience-number">01</span><div><span class="experience-kind">{t('Кабинет предмета', 'The object room')}</span><h3>{t('Один диск. Пять жизней.', 'One disc. Five lives.')}</h3><p>{t('Музейный снимок с увеличением, биография и честно обозначенные пробелы.', 'A museum photograph to explore, a biography and clearly marked gaps.')}</p><span class="experience-action">{t('Рассмотреть ближе', 'Take a closer look')} <span aria-hidden="true">↗</span></span></div></a>
+        <a href={href('/mythology/#legend-history')}><span class="experience-number">02</span><div><span class="experience-kind">{t('Архив легенды', 'The legend archive')}</span><h3>{t('Как меняется Хэшиби?', 'How does Heshibi change?')}</h3><p>{t('Когда происходит история — и когда о ней рассказывают? Сравните свидетельства.', 'When is a story set — and when is it told? Compare the sources.')}</p><span class="experience-action">{t('Открыть досье', 'Open the dossier')} <span aria-hidden="true">↗</span></span></div></a>
+        <a href={href('/material/#material-lens')}><span class="experience-number">03</span><div><span class="experience-kind">{t('Минералогическая линза', 'The mineral lens')}</span><h3>{t('Волокна или зёрна?', 'Fibres or grains?')}</h3><p>{t('Две учебные модели покажут, почему похожие камни устроены по-разному.', 'Two explanatory models show how similar-looking stones differ inside.')}</p><span class="experience-action">{t('Сдвинуть границу', 'Move the boundary')} <span aria-hidden="true">↗</span></span></div></a>
       </nav>
     </div>
   </section>
 
   <section id="routes" class="section page-shell section-rule" aria-labelledby="routes-title">
-    <p class="eyebrow">Четыре маршрута</p>
-    <h2 id="routes-title" class="title reveal">Выберите глубину погружения</h2>
+    <p class="eyebrow">{t('Четыре маршрута', 'Four routes')}</p>
+    <h2 id="routes-title" class="title reveal">{t('Выберите глубину погружения', 'Choose how deep to go')}</h2>
     <div class="card-grid route-grid reveal">
-      <RouteCard number="01" href="/history/" title="История" description="От Хуншань и Лянчжу до глобального музейного мира." accent="#8fcba5" />
-      <RouteCard number="02" href="/mythology/" title="Мифология" description="Легенда, культурный контекст и то, что можно подтвердить." accent="#d5a866" />
-      <RouteCard number="03" href="/material/" title="Материя" description="Нефрит и жадеит под минералогической линзой." accent="#87aab5" />
-      <RouteCard number="04" href="/medicine/" title="Медицина" description="Традиционные обещания и реальный уровень доказательств." accent="#c98173" />
+      <RouteCard number="01" href="/history/" title={t('История', 'History')} description={t('От Хуншань и Лянчжу до глобального музейного мира.', 'From Hongshan and Liangzhu to museums around the world.')} accent="#8fcba5" />
+      <RouteCard number="02" href="/mythology/" title={t('Мифология', 'Mythology')} description={t('Легенда, культурный контекст и то, что можно подтвердить.', 'Legends, cultural contexts and what the evidence supports.')} accent="#d5a866" />
+      <RouteCard number="03" href="/material/" title={t('Материя', 'Material')} description={t('Нефрит и жадеит под минералогической линзой.', 'Nephrite and jadeite through a mineralogical lens.')} accent="#87aab5" />
+      <RouteCard number="04" href="/medicine/" title={t('Медицина', 'Medicine')} description={t('Традиционные обещания и реальный уровень доказательств.', 'Traditional claims and the evidence behind them.')} accent="#c98173" />
     </div>
   </section>
 
   <section class="section history-preview section-rule">
     <div class="page-shell">
       <div class="preview-head reveal">
-        <div><p class="eyebrow">Более пяти тысяч лет</p><h2 class="title">Линия времени не прямая</h2></div>
-        <p class="lede">Нефрит многократно менял роль: инструмент статуса, посредник в ритуале, нравственная метафора, имперский материал и глобальный товар.</p>
+        <div><p class="eyebrow">{t('Более пяти тысяч лет', 'More than five thousand years')}</p><h2 class="title">{t('Линия времени не прямая', 'History is not a straight line')}</h2></div>
+        <p class="lede">{t('Нефрит многократно менял роль: инструмент статуса, посредник в ритуале, нравственная метафора, имперский материал и глобальный товар.', 'Jade has changed roles many times: a marker of status, a medium of ritual, a moral metaphor, an imperial material and a global commodity.')}</p>
       </div>
       <ol class="era-ribbon reveal">
         {orderedEras.slice(0, 4).map((era, index) => <li><span>0{index + 1}</span><p>{era.data.date}</p><h3>{era.data.title}</h3><small>{era.data.place}</small></li>)}
       </ol>
-      <a class="button" href={withBase('/history/')}>Открыть всю хронологию <span aria-hidden="true">→</span></a>
+      <a class="button" href={href('/history/')}>{t('Открыть всю хронологию', 'Explore the full timeline')} <span aria-hidden="true">→</span></a>
     </div>
   </section>
 
   <section class="myth-preview section" aria-labelledby="myth-title">
-    <img src={withBase('/images/mythic-jade.webp')} alt="Поэтическая иллюстрация круглого камня над водой в тумане" width="1672" height="941" loading="lazy" />
+    <img src={withBase('/images/mythic-jade.webp')} alt={t('Поэтическая иллюстрация круглого камня над водой в тумане', 'Poetic illustration of a circular stone above misty water')} width="1672" height="941" loading="lazy" />
     <div class="myth-preview__veil" aria-hidden="true"></div>
     <div class="page-shell myth-preview__content reveal">
       <p class="eyebrow">{featuredMyth.data.culture}</p>
       <h2 id="myth-title" class="display">{featuredMyth.data.title}</h2>
       <p class="lede">{featuredMyth.data.legend}</p>
-      <a class="button" href={withBase('/mythology/')}>Разобрать миф по слоям</a>
+      <a class="button" href={href('/mythology/')}>{t('Разобрать миф по слоям', 'Explore the layers of a myth')}</a>
     </div>
   </section>
 
   <section class="section page-shell material-preview section-rule" aria-labelledby="matter-title">
-    <div class="material-preview__image reveal"><img src={withBase('/images/jade-macro.webp')} alt="Генеративная макроиллюстрация волокнистой структуры зелёного нефрита" width="1536" height="1024" loading="lazy" /><span>не диагностическое изображение</span></div>
-    <div class="reveal"><p class="eyebrow">Материя</p><h2 id="matter-title" class="title">Прочность рождается из структуры</h2><p class="lede">{materials.find(({ id }) => id === 'nephrite')?.data.structure}. Именно переплетение волокон помогает нефриту выдерживать удар.</p><a class="button button--ghost" href={withBase('/material/')}>Открыть минералогическую линзу</a></div>
+    <div class="material-preview__image reveal"><img src={withBase('/images/jade-macro.webp')} alt={t('Генеративная макроиллюстрация волокнистой структуры зелёного нефрита', 'AI-generated macro illustration of the fibrous structure of green nephrite')} width="1536" height="1024" loading="lazy" /><span>{t('не диагностическое изображение', 'not a diagnostic image')}</span></div>
+    <div class="reveal"><p class="eyebrow">{t('Материя', 'Material')}</p><h2 id="matter-title" class="title">{t('Прочность рождается из структуры', 'Strength comes from structure')}</h2><p class="lede">{materials.find(({ id }) => id === 'nephrite')?.data.structure}. {t('Именно переплетение волокон помогает нефриту выдерживать удар.', 'This interweaving of fibres helps nephrite withstand impact.')}</p><a class="button button--ghost" href={href('/material/')}>{t('Открыть минералогическую линзу', 'Open the mineral lens')}</a></div>
   </section>
 
   <section class="section page-shell evidence-preview section-rule" aria-labelledby="evidence-title">
-    <div class="evidence-preview__label"><span aria-hidden="true">!</span><p>Медицинская<br />проверка</p></div>
+    <div class="evidence-preview__label"><span aria-hidden="true">!</span><p>{t('Медицинская', 'Medical')}<br />{t('проверка', 'evidence')}</p></div>
     <div class="reveal">
-      <p class="eyebrow">{evidenceLabel(firstMedical.data.evidence)}</p>
-      <h2 id="evidence-title" class="title">Культурная ценность — не клиническое доказательство</h2>
-      <p class="lede">Исследования массажа и гуа-ша не подтверждают «целительную энергию» минерала. Мы отдельно показываем традицию, наблюдаемый эффект, ограничения и риски.</p>
-      <a class="button" href={withBase('/medicine/')}>Проверить утверждения</a>
+      <p class="eyebrow">{evidenceLabel(firstMedical.data.evidence, locale)}</p>
+      <h2 id="evidence-title" class="title">{t('Культурная ценность — не клиническое доказательство', 'Cultural value is not clinical evidence')}</h2>
+      <p class="lede">{t('Исследования массажа и гуа-ша не подтверждают «целительную энергию» минерала. Мы отдельно показываем традицию, наблюдаемый эффект, ограничения и риски.', 'Studies of massage and gua sha do not establish a mineral’s ‘healing energy’. We distinguish tradition, observed effects, limitations and risks.')}</p>
+      <a class="button" href={href('/medicine/')}>{t('Проверить утверждения', 'Check the claims')}</a>
     </div>
   </section>
 
   <aside class="method-callout page-shell reveal">
-    <p class="eyebrow">Как читать YU</p>
-    <p>Каждое ключевое утверждение связано с источником. Легенда остаётся легендой, интерпретация — интерпретацией, а медицинская гипотеза получает явный уровень доказательности.</p>
-    <a href={withBase('/sources/')}>Открыть источники и методологию <span aria-hidden="true">↗</span></a>
+    <p class="eyebrow">{t('Как читать YU', 'How to read YU')}</p>
+    <p>{t('Каждое ключевое утверждение связано с источником. Легенда остаётся легендой, интерпретация — интерпретацией, а медицинская гипотеза получает явный уровень доказательности.', 'Every key claim is linked to a source. A legend remains a legend, an interpretation remains an interpretation, and each medical hypothesis has an explicit evidence level.')}</p>
+    <a href={href('/sources/')}>{t('Открыть источники и методологию', 'Explore sources and methodology')} <span aria-hidden="true">↗</span></a>
   </aside>
 </BaseLayout>
 

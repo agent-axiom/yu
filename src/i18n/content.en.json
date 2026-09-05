@@ -1,0 +1,134 @@
+{
+  "eras": {
+    "01-hongshan": {
+      "title": "Hongshan: images before written legends",
+      "date": "c. 4700–2900 BCE",
+      "summary": "In north-eastern China, nephrite was carved into pendants, animals and coiled animal-like figures later called ‘pig-dragons’.",
+      "detail": "Archaeological finds reveal sophisticated working techniques and a connection between some objects and burials. The figures’ precise meaning remains debated: a modern name for a shape is not an ancient caption and does not establish a single shared mythology.",
+      "place": "Liaoning and Inner Mongolia, north-eastern China"
+    },
+    "02-liangzhu": {
+      "title": "Liangzhu: jade as a system of power",
+      "date": "c. 3300–2300 BCE",
+      "summary": "In the Yangtze delta, bi discs, tubular cong and other forms were included in richly furnished burials.",
+      "detail": "Differences in the quantity and quality of jades between burials help archaeologists identify social and ritual hierarchies. The purposes of individual forms are reconstructed from their find contexts; later texts cannot simply be projected onto the Neolithic.",
+      "place": "Lower Yangtze, present-day Zhejiang province"
+    },
+    "03-shang-zhou": {
+      "title": "Shang and Zhou: ritual, rank and virtue",
+      "date": "c. 1600–221 BCE",
+      "summary": "Jade objects accompanied ceremonies, elite dress, gift exchange and burial.",
+      "detail": "In later written traditions, the qualities of jade became a language of moral comparison: purity, steadfastness and nobility. This philosophical reading matters in its own right, but does not necessarily explain the original meaning of every earlier form.",
+      "place": "China’s Central Plains and neighbouring regions"
+    },
+    "04-mesoamerica": {
+      "title": "Mesoamerica: the green of life",
+      "date": "c. 1000 BCE – 900 CE",
+      "summary": "The Olmec, and later the Maya, made jadeite masks, pendants, beads and emblems of royal power.",
+      "detail": "For the Maya, bright green material was associated with young maize, water, breath and renewal. These traditions developed independently of Chinese traditions; the shared European word jade does not imply a shared origin for their symbols.",
+      "place": "Southern Mexico, Guatemala, Belize and Honduras"
+    },
+    "05-qin-han": {
+      "title": "Qin and Han: empire and hopes of preservation",
+      "date": "221 BCE – 220 CE",
+      "summary": "Elites included jade in elaborate funerary arrangements; surviving suits consist of plaques joined by wire.",
+      "detail": "Texts and archaeology record beliefs in jade’s purifying and preserving powers. The state of the buried bodies does not demonstrate that these beliefs were literally effective: the suits are evidence of ritual, status and technology.",
+      "place": "Imperial China"
+    },
+    "06-medieval": {
+      "title": "From the Six Dynasties to the Yuan: new subjects",
+      "date": "220–1368 CE",
+      "summary": "Jade retained its prestige, while forms and subjects changed alongside court culture, religions and contacts across regions.",
+      "detail": "Collections from this period include ornaments, vessels and objects for the scholar’s studio. Later makers also revisited ancient forms, so an archaic appearance alone does not guarantee an early date.",
+      "place": "China and Central Asian networks"
+    },
+    "07-ming-qing": {
+      "title": "Ming and Qing: collecting and virtuosity",
+      "date": "1368–1911",
+      "summary": "Imperial collections brought together ancient jades, archaistic works and technically ambitious contemporary carving.",
+      "detail": "Under the Qing, vivid jadeite from Myanmar gained considerable prestige. The Jadeite Cabbage shows how a carver turned natural green and white areas, cracks and inclusions into a convincing plant; some of its proposed wedding symbolism remains a matter of interpretation.",
+      "place": "China’s imperial workshops and collections"
+    },
+    "08-modern": {
+      "title": "The modern era: two materials, one name",
+      "date": "19th–21st centuries",
+      "summary": "Mineralogy distinguished nephrite from jadeite, while archaeology reconsidered museum dates and contexts.",
+      "detail": "Today, laboratories distinguish materials through composition, structure and instrumental analysis. At the same time, communities retain their own living concepts, such as Māori pounamu, which cannot be reduced to a single gemmological classification.",
+      "place": "Global scientific and cultural contexts"
+    }
+  },
+  "myths": {
+    "01-heshi-bi": {
+      "title": "Mr He’s jade",
+      "culture": "Chinese literary tradition",
+      "legend": "In China Culture’s retelling, Bian He twice offers rulers an unworked stone and is twice punished as a deceiver. Under a third ruler, the find is worked and its precious core revealed. The stone’s name becomes a recognition of the man’s honesty.",
+      "context": "The story is known through ancient texts and later retellings; over time, the legendary disc became associated with diplomatic narratives and the imperial seal.",
+      "confirmed": "The textual tradition exists, and bi discs are known archaeologically. But no particular object has been identified as Heshibi: its fate and transformation into a seal belong to the legendary account."
+    },
+    "02-han-immortality": {
+      "title": "Jade against decay",
+      "culture": "Han-period funerary beliefs",
+      "legend": "Jade was believed to purify and preserve the body, so high-ranking people could be buried in suits made of hundreds or thousands of plaques.",
+      "context": "Burial was understood as a place where status and existence continued. The material, labour and complexity of the suit also expressed the family’s power.",
+      "confirmed": "Archaeologists have found suits and plaques; museum research documents beliefs about preservation. The biological preservation of bodies does not substantiate the claimed power of the stone."
+    },
+    "03-poutini": {
+      "title": "Poutini — guardian of pounamu",
+      "culture": "Ngāti Waewae / Māori, Aotearoa",
+      "legend": "In one iwi pūrākau, the supernatural Poutini guards Ngāhue and the spiritual essence of pounamu, while his journey along the West Coast explains places associated with the stone.",
+      "context": "Different iwi have different accounts of the origins of pounamu. The narrative connects landscape, genealogy, rights and community memory.",
+      "confirmed": "Pounamu is indeed sourced mainly from the South Island and has particular significance for Ngāi Tahu. The mythological layer is presented as a living tradition, not a geological explanation."
+    },
+    "04-maya-breath": {
+      "title": "The stone of living breath",
+      "culture": "The ancient Maya",
+      "legend": "Lustrous, cool jadeite was associated with water, mist, young maize and the breath of life; a bead could be placed in the mouth of an elite deceased person as a sign of eternal life.",
+      "context": "Its green colour, rare source in the Motagua valley and labour-intensive working made jadeite a material of power, inheritance and the sacred centre.",
+      "confirmed": "Archaeological finds, imagery and inscriptions attest to elite and funerary use. The phrase ‘living stone’ describes a cultural concept, not a physical property of the mineral."
+    }
+  },
+  "materials": {
+    "nephrite": {
+      "name": "Nephrite",
+      "family": "An amphibole rock of the tremolite–actinolite series",
+      "hardness": "6–6.5 on the Mohs scale",
+      "structure": "Densely interwoven fine fibrous crystallites",
+      "toughness": "Exceptionally high; nephrite usually resists chipping better than jadeite",
+      "note": "Nephrite can be white, grey, yellow, brown or green. Iron influences its green shades, but colour alone cannot establish authenticity: reliable identification requires gemmological and spectroscopic methods."
+    },
+    "jadeite": {
+      "name": "Jadeite",
+      "family": "A pyroxene rock composed mainly of jadeite",
+      "hardness": "6.5–7 on the Mohs scale",
+      "structure": "A dense mosaic of interlocking mineral grains",
+      "toughness": "Very high, although fibrous nephrite usually resists impact better",
+      "note": "Jadeite is not a variety of nephrite, but a different mineralogical material. Both have historically been called jade; the highly prized translucent green examples represent only a small part of jadeite’s rich palette."
+    }
+  },
+  "medicine": {
+    "01-healing-energy": {
+      "title": "The stone’s ‘healing energy’",
+      "tradition": "Nephrite has been credited with protection, longevity, purification and support for the life force. These beliefs matter as part of cultural and religious history.",
+      "assessment": "There is no reliable clinical evidence that nephrite’s chemical composition itself treats disease or transfers a special energy to people. Evidence on rollers and gua sha tests the mechanical effects of the procedures, not a healing property of the stone.",
+      "safety": "Do not replace diagnosis, medication or prescribed treatment with a stone. Seek advice from a medical professional for new, severe or persistent symptoms."
+    },
+    "02-roller-circulation": {
+      "title": "Facial rollers and skin microcirculation",
+      "tradition": "Cool, smooth tools are used for facial massage, to ease the feeling of puffiness and for relaxation.",
+      "assessment": "A small Japanese study recorded a short-term increase in skin blood flow after five minutes of roller massage. It involved 12–14 people, and the roller material was not specific to nephrite: the result cannot support claims about a special power of the mineral.",
+      "safety": "Use a clean tool without strong pressure; do not use it on damaged, inflamed or infected skin. Stop if it causes pain or irritation."
+    },
+    "03-gua-sha-pain": {
+      "title": "Gua sha and muscle pain",
+      "tradition": "Gua sha is a technique that scrapes the skin with a smooth tool. Stone plates are often used today, although tool materials have varied historically.",
+      "assessment": "A systematic review by Korean researchers found too few high-quality trials to establish the effectiveness of gua sha for pain. Short-term relief is possible, but confidence in the effect and its causes remains low.",
+      "safety": "Gua sha can cause petechiae, bruising and soreness. Do not use it on damaged skin or when there is a risk of bleeding; if you take anticoagulants, consult a doctor first."
+    },
+    "04-cosmetic-effect": {
+      "title": "Short-term cosmetic effects",
+      "tradition": "Facial massage with a roller or gua sha tool is promoted as a way to improve contour, firmness and skin appearance.",
+      "assessment": "A small randomised study in 2025 involving 34 women reported changes in selected measures after eight weeks of home massage. It compared two active techniques without a group receiving no treatment, so it does not demonstrate lasting rejuvenation or isolate the effect of nephrite as a material.",
+      "safety": "Maintain good hygiene, avoid excessive pressure and do not expect massage to replace dermatological treatment. If you develop persistent swelling, a rash or pain, stop the massage and consult a doctor."
+    }
+  }
+}

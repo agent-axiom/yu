@@ -1,50 +1,53 @@
 ---
 import { getCollection } from 'astro:content';
 import BaseLayout from '../layouts/BaseLayout.astro';
+import { localeFromPath, translator } from '../lib/i18n';
 
+const locale = localeFromPath(Astro.url.pathname);
+const t = translator(locale);
 const sources = (await getCollection('sources')).sort((a, b) => {
   const yearOrder = (b.data.publicationYear ?? -Infinity) - (a.data.publicationYear ?? -Infinity);
   return yearOrder || a.data.title.localeCompare(b.data.title);
 });
 const groups = [
-  { kind: 'paper', title: 'Рецензируемые статьи', note: 'Археология, минералогия и исследования на людях.' },
-  { kind: 'museum', title: 'Музейные коллекции', note: 'Карточки предметов, каталоги и кураторские исследования.' },
-  { kind: 'book', title: 'Книги и каталоги', note: 'Развёрнутый исторический и культурный контекст.' },
-  { kind: 'institution', title: 'Научные учреждения', note: 'Справочные материалы и клинические рекомендации.' },
+  { kind: 'paper', title: t('Рецензируемые статьи', 'Peer-reviewed papers'), note: t('Археология, минералогия и исследования на людях.', 'Archaeology, mineralogy and human studies.') },
+  { kind: 'museum', title: t('Музейные коллекции', 'Museum collections'), note: t('Карточки предметов, каталоги и кураторские исследования.', 'Object records, catalogues and curatorial research.') },
+  { kind: 'book', title: t('Книги и каталоги', 'Books and catalogues'), note: t('Развёрнутый исторический и культурный контекст.', 'In-depth historical and cultural context.') },
+  { kind: 'institution', title: t('Научные учреждения', 'Research institutions'), note: t('Справочные материалы и клинические рекомендации.', 'Reference materials and clinical guidance.') },
 ] as const;
-const regionLabel = { asia: 'Азиатская перспектива', west: 'Западная перспектива', global: 'Локальная / глобальная перспектива' };
+const regionLabel = { asia: t('Азиатская перспектива', 'Asian perspective'), west: t('Западная перспектива', 'Western perspective'), global: t('Локальная / глобальная перспектива', 'Local / global perspective') };
 ---
 
-<BaseLayout title="Источники и методология" description="Полная библиография YU: азиатские и западные исследования, музейные коллекции, медицинские публикации и редакционная политика.">
+<BaseLayout title={t('Источники и методология', 'Sources and methodology')} description={t('Полная библиография YU: азиатские и западные исследования, музейные коллекции, медицинские публикации и редакционная политика.', 'YU’s full bibliography: Asian and Western research, museum collections, medical publications and editorial policies.')}>
   <header class="sources-hero page-shell">
-    <p class="eyebrow">Источники · методология</p>
-    <h1 class="display">Не список ссылок, а карта доверия</h1>
-    <p class="lede">Мы соединяем локальную экспертизу азиатских исследователей с международной археологией, минералогией, музейными каталогами и медицинскими обзорами — и показываем, где заканчивается каждый источник.</p>
-    <div class="source-stats"><p><strong>{sources.length}</strong><span>источника</span></p><p><strong>{sources.filter(({ data }) => data.region === 'asia').length}</strong><span>азиатских</span></p><p><strong>{sources.filter(({ data }) => data.kind === 'paper').length}</strong><span>статей</span></p><p><strong>100%</strong><span>с точной ссылкой</span></p></div>
+    <p class="eyebrow">{t('Источники · методология', 'Sources · methodology')}</p>
+    <h1 class="display">{t('Не список ссылок, а карта доверия', 'Not a list of links, but a map of evidence')}</h1>
+    <p class="lede">{t('Мы соединяем локальную экспертизу азиатских исследователей с международной археологией, минералогией, музейными каталогами и медицинскими обзорами — и показываем, где заканчивается каждый источник.', 'We bring local expertise from Asian researchers into conversation with international archaeology, mineralogy, museum catalogues and medical reviews — and show the limits of each source.')}</p>
+    <div class="source-stats"><p><strong>{sources.length}</strong><span>{t('источника', 'sources')}</span></p><p><strong>{sources.filter(({ data }) => data.region === 'asia').length}</strong><span>{t('азиатских', 'Asian sources')}</span></p><p><strong>{sources.filter(({ data }) => data.kind === 'paper').length}</strong><span>{t('статей', 'papers')}</span></p><p><strong>100%</strong><span>{t('с точной ссылкой', 'with direct links')}</span></p></div>
   </header>
 
   <section class="section page-shell method section-rule" aria-labelledby="method-title">
-    <div><p class="eyebrow">Редакционная иерархия</p><h2 id="method-title" class="title">Утверждение получает источник своего типа</h2></div>
+    <div><p class="eyebrow">{t('Редакционная иерархия', 'Our editorial hierarchy')}</p><h2 id="method-title" class="title">{t('Утверждение получает источник своего типа', 'Match the source to the claim')}</h2></div>
     <ol>
-      <li><span>01</span><div><h3>Предмет и дата</h3><p>Археологическая публикация или музейная карточка с контекстом находки.</p></div></li>
-      <li><span>02</span><div><h3>Состав и структура</h3><p>Геммологическая организация или рецензируемая минералогия.</p></div></li>
-      <li><span>03</span><div><h3>Легенда и смысл</h3><p>Атрибутированный текст, кураторская интерпретация и оговорка о спорном.</p></div></li>
-      <li><span>04</span><div><h3>Здоровье</h3><p>Исследования на людях, систематические обзоры и медицинская безопасность.</p></div></li>
+      <li><span>01</span><div><h3>{t('Предмет и дата', 'Object and date')}</h3><p>{t('Археологическая публикация или музейная карточка с контекстом находки.', 'An archaeological publication or museum record that includes the find context.')}</p></div></li>
+      <li><span>02</span><div><h3>{t('Состав и структура', 'Composition and structure')}</h3><p>{t('Геммологическая организация или рецензируемая минералогия.', 'A gemmological institution or peer-reviewed mineralogical research.')}</p></div></li>
+      <li><span>03</span><div><h3>{t('Легенда и смысл', 'Legend and meaning')}</h3><p>{t('Атрибутированный текст, кураторская интерпретация и оговорка о спорном.', 'An attributed text, curatorial interpretation and a note on what remains disputed.')}</p></div></li>
+      <li><span>04</span><div><h3>{t('Здоровье', 'Health')}</h3><p>{t('Исследования на людях, систематические обзоры и медицинская безопасность.', 'Human studies, systematic reviews and medical safety information.')}</p></div></li>
     </ol>
   </section>
 
   <section class="section page-shell policies section-rule" aria-labelledby="policies-title">
-    <p class="eyebrow">Правила проекта</p><h2 id="policies-title" class="title">Что мы делаем при несогласии</h2>
+    <p class="eyebrow">{t('Правила проекта', 'Project principles')}</p><h2 id="policies-title" class="title">{t('Что мы делаем при несогласии', 'How we handle disagreement')}</h2>
     <div class="policy-grid">
-      <article><span>Интерпретации</span><p>Не превращаем вероятный ритуальный смысл в установленный факт. Показываем контекст и формулируем границу уверенности.</p></article>
-      <article><span>Медицина</span><p>Не называем традицию лечением без клинических данных. Малое исследование описываем вместе с выборкой, контролем и ограничениями.</p></article>
-      <article><span>Региональный голос</span><p>Стараемся включать исследователей и учреждения культуры, о которой идёт речь, а не опираться только на западные пересказы.</p></article>
-      <article><span>Изображения</span><p>Музейные фотографии используются только при явной открытой лицензии. Генеративные сцены маркируются и не служат доказательством.</p></article>
+      <article><span>{t('Интерпретации', 'Interpretations')}</span><p>{t('Не превращаем вероятный ритуальный смысл в установленный факт. Показываем контекст и формулируем границу уверенности.', 'We do not turn a plausible ritual meaning into an established fact. We provide context and state the limits of our confidence.')}</p></article>
+      <article><span>{t('Медицина', 'Medicine')}</span><p>{t('Не называем традицию лечением без клинических данных. Малое исследование описываем вместе с выборкой, контролем и ограничениями.', 'We do not describe a tradition as a treatment without clinical evidence. Small studies are presented with their sample size, controls and limitations.')}</p></article>
+      <article><span>{t('Региональный голос', 'Regional voices')}</span><p>{t('Стараемся включать исследователей и учреждения культуры, о которой идёт речь, а не опираться только на западные пересказы.', 'We aim to include researchers and institutions from the culture concerned, rather than relying only on Western retellings.')}</p></article>
+      <article><span>{t('Изображения', 'Images')}</span><p>{t('Музейные фотографии используются только при явной открытой лицензии. Генеративные сцены маркируются и не служат доказательством.', 'Museum photographs are used only with explicit open licensing. AI-generated scenes are labelled and do not serve as evidence.')}</p></article>
     </div>
   </section>
 
   <section class="section page-shell bibliography section-rule" aria-labelledby="bibliography-title">
-    <p class="eyebrow">Библиография</p><h2 id="bibliography-title" class="title">Все публикации</h2>
+    <p class="eyebrow">{t('Библиография', 'Bibliography')}</p><h2 id="bibliography-title" class="title">{t('Все публикации', 'All publications')}</h2>
     {groups.map((group) => {
       const groupSources = sources.filter(({ data }) => data.kind === group.kind);
       return groupSources.length > 0 && (
@@ -52,9 +55,9 @@ const regionLabel = { asia: 'Азиатская перспектива', west: '
           <header><h3 id={`group-${group.kind}`}>{group.title}</h3><p>{group.note}</p><span>{groupSources.length.toString().padStart(2, '0')}</span></header>
           <ol>{groupSources.map((source) => (
             <li>
-              <div class="source-year">{source.data.publicationYear ?? 'б. д.'}</div>
+              <div class="source-year">{source.data.publicationYear ?? t('б. д.', 'n.d.')}</div>
               <div><p class="source-region">{regionLabel[source.data.region]}</p><h4>{source.data.title}</h4><p>{source.data.authors.join(', ')}</p><p>{source.data.publisher}{source.data.locator && ` · ${source.data.locator}`}</p></div>
-              <div class="source-actions"><span>Обращение: {source.data.accessed}</span>{source.data.license && <span>{source.data.license}</span>}<a href={source.data.url} target="_blank" rel="noreferrer">Открыть ↗</a></div>
+              <div class="source-actions"><span>{t('Обращение:', 'Accessed:')} {source.data.accessed}</span>{source.data.license && <span>{source.data.license}</span>}<a href={source.data.url} target="_blank" rel="noreferrer">{t('Открыть ↗', 'Open ↗')}</a></div>
             </li>
           ))}</ol>
         </section>

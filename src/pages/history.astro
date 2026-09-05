@@ -4,54 +4,61 @@ import HistoryTimeline from '../components/HistoryTimeline.astro';
 import ObjectBiography from '../components/ObjectBiography.astro';
 import SourceRef from '../components/SourceRef.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
+import Term from '../components/Term.astro';
 import { withBase } from '../lib/urls';
+import { localeFromPath, localizePath, translator } from '../lib/i18n';
+import { localizeCollection } from '../i18n/content';
 
-const [eras, sources] = await Promise.all([getCollection('eras'), getCollection('sources')]);
+const locale = localeFromPath(Astro.url.pathname);
+const t = translator(locale);
+const href = (path: string) => localizePath(path, locale);
+const [eraRecords, sources] = await Promise.all([getCollection('eras'), getCollection('sources')]);
+const eras = localizeCollection('eras', eraRecords, locale);
 const orderedEras = eras.sort((a, b) => a.data.order - b.data.order);
 const sourceMap = new Map(sources.map((entry) => [entry.id, entry.data]));
 const metBi = sourceMap.get('met-bi-2026');
 const metMaya = sourceMap.get('met-maya-2026');
 ---
 
-<BaseLayout title="История нефрита" description="Интерактивная история нефрита и жадеита от неолитических культур Китая и Мезоамерики до современности.">
+<BaseLayout title={t('История нефрита', 'A history of jade')} description={t('Интерактивная история нефрита и жадеита от неолитических культур Китая и Мезоамерики до современности.', 'An interactive history of nephrite and jadeite, from Neolithic China and the cultures of Mesoamerica to the present.')}>
   <header class="page-hero page-shell">
-    <p class="eyebrow">История · 5000+ лет</p>
-    <h1 class="display">Камень как мера времени</h1>
-    <p class="lede">Археология показывает предметы, технологии и контекст находки. Значение приходится реконструировать осторожнее: даже там, где ритуальная роль вероятна, точный смысл формы мог меняться и остаётся предметом дискуссии.</p>
+    <p class="eyebrow">{t('История · 5000+ лет', 'History · 5,000+ years')}</p>
+    <h1 class="display">{t('Камень как мера времени', 'Stone as a measure of time')}</h1>
+    <p class="lede">{t('Археология показывает предметы, технологии и контекст находки. Значение приходится реконструировать осторожнее: даже там, где ритуальная роль вероятна, точный смысл формы мог меняться и остаётся предметом дискуссии.', 'Archaeology reveals objects, technologies and find contexts. Meaning requires more cautious reconstruction: even when a ritual role is likely, a form’s precise significance may have changed and remains open to debate.')}</p>
   </header>
 
   <ObjectBiography />
 
   <section class="section page-shell section-rule" aria-labelledby="timeline-title">
-    <div class="timeline-intro reveal"><div><p class="eyebrow">Хронология</p><h2 id="timeline-title" class="title">Восемь поворотных эпох</h2></div><p>Выберите точку на шкале. В каждой панели факты отделены от интерпретации, а маркеры открывают точные публикации.</p></div>
+    <div class="timeline-intro reveal"><div><p class="eyebrow">{t('Хронология', 'Timeline')}</p><h2 id="timeline-title" class="title">{t('Восемь поворотных эпох', 'Eight turning points')}</h2></div><p>{t('Выберите точку на шкале. В каждой панели факты отделены от интерпретации, а маркеры открывают точные публикации.', 'Choose a point on the timeline. Each panel separates facts from interpretation, with source markers linking to specific publications.')}</p></div>
     <HistoryTimeline eras={orderedEras} sources={sources} />
   </section>
 
   <section class="section artifacts" aria-labelledby="objects-title">
-    <div class="page-shell"><p class="eyebrow">Два континента</p><h2 id="objects-title" class="title">Форма хранит разные истории</h2></div>
+    <div class="page-shell"><p class="eyebrow">{t('Два континента', 'Two continents')}</p><h2 id="objects-title" class="title">{t('Форма хранит разные истории', 'Forms hold different histories')}</h2></div>
     <div class="artifact-grid page-shell reveal">
       <figure>
-        <div class="artifact-image"><img src={withBase('/images/artifacts/liangzhu-bi.webp')} alt="Светлый нефритовый диск би культуры Лянчжу" width="1200" height="901" loading="lazy" /></div>
-        <figcaption><span>Китай · III тыс. до н. э.</span><h3>Диск bi</h3><p>Такие диски находят в погребениях элиты. Их размещение у тела указывает на ритуальную роль, но не даёт единственного, полностью доказанного толкования символа.{metBi && <SourceRef source={metBi} />}</p></figcaption>
+        <div class="artifact-image"><img src={withBase('/images/artifacts/liangzhu-bi.webp')} alt={t('Светлый нефритовый диск би культуры Лянчжу', 'A pale nephrite bi disc of the Liangzhu culture')} width="1200" height="901" loading="lazy" /></div>
+        <figcaption><span>{t('Китай · III тыс. до н. э.', 'China · 3rd millennium BCE')}</span><h3><Term id="bi">{t('Диск bi', 'Bi disc')}</Term></h3><p>{t('Такие диски находят в погребениях элиты. Их размещение у тела указывает на ритуальную роль, но не даёт единственного, полностью доказанного толкования символа.', 'Discs of this kind are found in elite burials. Their placement near the body suggests a ritual role, but does not establish a single definitive interpretation of the symbol.')}{metBi && <SourceRef source={metBi} />}</p></figcaption>
       </figure>
       <figure>
-        <div class="artifact-image artifact-image--green"><img src={withBase('/images/artifacts/maya-jade-ornament.webp')} alt="Зелёное жадеитовое украшение майя с волнистым краем" width="1200" height="639" loading="lazy" /></div>
-        <figcaption><span>Майя · 400–900 н. э.</span><h3>Украшение-раковина</h3><p>Жадеит связывали с водой, ростом маиса, дыханием и долговечностью. Это не «тот же миф», что в Китае, а самостоятельная мезоамериканская система значений.{metMaya && <SourceRef source={metMaya} />}</p></figcaption>
+        <div class="artifact-image artifact-image--green"><img src={withBase('/images/artifacts/maya-jade-ornament.webp')} alt={t('Зелёное жадеитовое украшение майя с волнистым краем', 'A green Maya jadeite ornament with an undulating edge')} width="1200" height="639" loading="lazy" /></div>
+        <figcaption><span>{t('Майя · 400–900 н. э.', 'Maya · 400–900 CE')}</span><h3>{t('Украшение-раковина', 'Shell-shaped ornament')}</h3><p>{t('Жадеит связывали с водой, ростом маиса, дыханием и долговечностью. Это не «тот же миф», что в Китае, а самостоятельная мезоамериканская система значений.', 'Jadeite was associated with water, growing maize, breath and longevity. This is not ‘the same myth’ as in China, but a distinct Mesoamerican system of meanings.')}{metMaya && <SourceRef source={metMaya} />}</p></figcaption>
       </figure>
     </div>
   </section>
 
   <section class="section page-shell meanings section-rule" aria-labelledby="meanings-title">
-    <div><p class="eyebrow">Как менялся смысл</p><h2 id="meanings-title" class="title">От редкого материала — к нравственной метафоре</h2></div>
+    <div><p class="eyebrow">{t('Как менялся смысл', 'Changing meanings')}</p><h2 id="meanings-title" class="title">{t('От редкого материала — к нравственной метафоре', 'From rare material to moral metaphor')}</h2></div>
     <ol>
-      <li><span>01</span><div><h3>Труд</h3><p>Твёрдый камень требовал долгого пиления, шлифовки и полировки абразивами. Трудоёмкость делала предмет видимым знаком ресурсов и мастерства.</p></div></li>
-      <li><span>02</span><div><h3>Ритуал</h3><p>Контекст погребений и приношений показывает социальную и церемониальную роль — но археологический предмет не сообщает нам автоматически точный текст веры.</p></div></li>
-      <li><span>03</span><div><h3>Добродетель</h3><p>В китайской письменной традиции качества нефрита стали языком разговора о человеческом характере, чистоте и правлении.</p></div></li>
-      <li><span>04</span><div><h3>Глобальный рынок</h3><p>Современное слово jade соединяет разные минералы, места добычи, национальные наследия, коллекционирование и коммерческие обещания.</p></div></li>
+      <li><span>01</span><div><h3>{t('Труд', 'Labour')}</h3><p>{t('Твёрдый камень требовал долгого пиления, шлифовки и полировки абразивами. Трудоёмкость делала предмет видимым знаком ресурсов и мастерства.', 'The hard stone required lengthy sawing, grinding and polishing with abrasives. This labour made an object a visible sign of resources and skill.')}</p></div></li>
+      <li><span>02</span><div><h3>{t('Ритуал', 'Ritual')}</h3><p>{t('Контекст погребений и приношений показывает социальную и церемониальную роль — но археологический предмет не сообщает нам автоматически точный текст веры.', 'Burial and offering contexts reveal social and ceremonial roles — but an archaeological object does not automatically tell us the precise beliefs behind it.')}</p></div></li>
+      <li><span>03</span><div><h3>{t('Добродетель', 'Virtue')}</h3><p>{t('В китайской письменной традиции качества нефрита стали языком разговора о человеческом характере, чистоте и правлении.', 'In Chinese written tradition, jade’s qualities became a way to discuss human character, purity and government.')}</p></div></li>
+      <li><span>04</span><div><h3>{t('Глобальный рынок', 'A global market')}</h3><p>{t('Современное слово jade соединяет разные минералы, места добычи, национальные наследия, коллекционирование и коммерческие обещания.', 'The modern word jade connects different minerals, sources, national heritages, collecting practices and commercial claims.')}</p></div></li>
     </ol>
   </section>
 
-  <aside class="history-note page-shell reveal"><p><strong>Редакционная оговорка:</strong> древняя датировка и контекст предмета могут быть хорошо подтверждены, а его «значение» — оставаться гипотезой. На YU эти уровни не смешиваются.</p><a href={withBase('/sources/')}>Методология источников ↗</a></aside>
+  <aside class="history-note page-shell reveal"><p><strong>{t('Редакционная оговорка:', 'Editorial note:')}</strong> {t('древняя датировка и контекст предмета могут быть хорошо подтверждены, а его «значение» — оставаться гипотезой. На YU эти уровни не смешиваются.', 'an object’s early date and context may be well established while its ‘meaning’ remains a hypothesis. YU keeps these levels separate.')}</p><a href={href('/sources/')}>{t('Методология источников ↗', 'Our source methodology ↗')}</a></aside>
 </BaseLayout>
 
 <style>

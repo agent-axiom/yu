@@ -30,3 +30,14 @@
 - Схемы волокнистой и зернистой структуры в `MaterialLens.astro` — оригинальные векторные учебные рисунки YU. Они не являются микрофотографиями, не имеют масштаба и не предназначены для диагностики. Содержательная опора: [описание jade в GIA](https://www.gia.edu/jade-description); различие твёрдости и вязкости — [GIA, Jade Care and Cleaning](https://www.gia.edu/jade-care-cleaning).
 - `ObjectBiography.astro` использует существующий снимок `artifacts/liangzhu-bi.webp` без изменения файла; увеличение и перемещение меняют только область просмотра. Наблюдения по фотографии отделены от данных каталога и интерпретаций.
 - `LegendHistory.astro` содержит редакторские пересказы, не цитаты. Ссылки на каждый текст и основание его датировки приведены непосредственно в досье.
+
+## Локальные шрифты
+
+- `public/fonts/manrope-variable.ttf` — Manrope, The Manrope Project Authors; оригинальный variable TTF из [Google Fonts / Manrope](https://github.com/google/fonts/tree/main/ofl/manrope), без модификации шрифта. Лицензия SIL Open Font License 1.1 включена в `Manrope-OFL.txt`.
+- `public/fonts/prata-regular.ttf` — Prata, The Prata Project Authors / Cyreal; оригинальный TTF из [Google Fonts / Prata](https://github.com/google/fonts/tree/main/ofl/prata), без модификации шрифта. Лицензия SIL Open Font License 1.1 включена в `Prata-OFL.txt`.
+- Оба файла содержат латиницу и кириллицу и обслуживаются самим сайтом; Google Fonts API не вызывается.
+
+## Превью ссылок и словарь
+
+- `public/social/{ru,en}/*.jpg` — оригинальная типографическая композиция YU, отрендеренная в Chromium из HTML/CSS в 1200×630. Использует описанную выше атмосферную иллюстрацию `hero-jade.webp`; её генеративное происхождение не меняется. Превью не являются фотографиями музейных предметов.
+- `src/i18n/glossary.ts` — редакторские определения и культурные пояснения; источники GIA, Te Ara, Te Papa и словари указаны у каждой статьи. Внешние записи произношения не копируются и открываются на сайтах правообладателей.

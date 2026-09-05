@@ -2,41 +2,45 @@
 import { getCollection } from 'astro:content';
 import EvidencePanel from '../components/EvidencePanel.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
-import { withBase } from '../lib/urls';
+import { localeFromPath, localizePath, translator } from '../lib/i18n';
+import { localizeCollection } from '../i18n/content';
 
+const locale = localeFromPath(Astro.url.pathname);
+const t = translator(locale);
+const href = (path: string) => localizePath(path, locale);
 const [medicineRecords, sources] = await Promise.all([getCollection('medicine'), getCollection('sources')]);
-const medicine = medicineRecords.sort((a, b) => a.id.localeCompare(b.id));
+const medicine = localizeCollection('medicine', medicineRecords, locale).sort((a, b) => a.id.localeCompare(b.id));
 ---
 
-<BaseLayout title="Нефрит и медицина" description="Доказательная проверка лечебных утверждений о нефрите, роллерах и гуа-ша: исследования, ограничения и безопасность.">
+<BaseLayout title={t('Нефрит и медицина', 'Jade and medicine')} description={t('Доказательная проверка лечебных утверждений о нефрите, роллерах и гуа-ша: исследования, ограничения и безопасность.', 'An evidence-based assessment of health claims about nephrite, facial rollers and gua sha: research, limitations and safety.')}>
   <header class="medicine-hero page-shell">
-    <p class="eyebrow">Медицина · проверка обещаний</p>
-    <h1 class="display">Что делает камень — и что делает массаж?</h1>
-    <p class="lede">Культурная традиция заслуживает уважения. Медицинское утверждение — отдельной проверки. Мы не переносим результат механической процедуры на «энергию» минерала.</p>
+    <p class="eyebrow">{t('Медицина · проверка обещаний', 'Medicine · examining the claims')}</p>
+    <h1 class="display">{t('Что делает камень — и что делает массаж?', 'What does the stone do — and what does massage do?')}</h1>
+    <p class="lede">{t('Культурная традиция заслуживает уважения. Медицинское утверждение — отдельной проверки. Мы не переносим результат механической процедуры на «энергию» минерала.', 'Cultural traditions deserve respect. Medical claims require separate scrutiny. We do not attribute the results of a mechanical procedure to a mineral’s ‘energy’.')}</p>
   </header>
 
-  <aside class="safety-notice page-shell" aria-label="Важное медицинское предупреждение">
+  <aside class="safety-notice page-shell" aria-label={t('Важное медицинское предупреждение', 'Important medical warning')}>
     <span aria-hidden="true">!</span>
-    <div><strong>Сначала безопасность</strong><p>Этот информационный материал не заменяет диагностику, консультацию квалифицированного врача и не заменяет назначенное лечение. При выраженных или сохраняющихся симптомах обратитесь за медицинской помощью.</p></div>
+    <div><strong>{t('Сначала безопасность', 'Safety first')}</strong><p>{t('Этот информационный материал не заменяет диагностику, консультацию квалифицированного врача и не заменяет назначенное лечение. При выраженных или сохраняющихся симптомах обратитесь за медицинской помощью.', 'This information is not a substitute for diagnosis, advice from a qualified doctor or prescribed treatment. Seek medical care for severe or persistent symptoms.')}</p></div>
   </aside>
 
   <section class="section page-shell section-rule evidence-key" aria-labelledby="levels-title">
-    <div><p class="eyebrow">Шкала чтения</p><h2 id="levels-title" class="title">Уровень — не оценка культуры</h2></div>
+    <div><p class="eyebrow">{t('Шкала чтения', 'A guide to the evidence')}</p><h2 id="levels-title" class="title">{t('Уровень — не оценка культуры', 'An evidence level is not a judgement on a culture')}</h2></div>
     <ul>
-      <li><span class="key-dot key-dot--tradition"></span><strong>Традиционное представление</strong><p>Зафиксированная практика или вера; не доказательство эффекта.</p></li>
-      <li><span class="key-dot key-dot--lab"></span><strong>Лабораторное наблюдение</strong><p>Механизм или измерение вне полноценного клинического вывода.</p></li>
-      <li><span class="key-dot key-dot--clinical"></span><strong>Клинические данные</strong><p>Исследования на людях; качество и ограничения показаны отдельно.</p></li>
-      <li><span class="key-dot key-dot--none"></span><strong>Доказательств нет</strong><p>Надёжных данных для заявленного эффекта не найдено.</p></li>
+      <li><span class="key-dot key-dot--tradition"></span><strong>{t('Традиционное представление', 'Traditional belief')}</strong><p>{t('Зафиксированная практика или вера; не доказательство эффекта.', 'A documented practice or belief, not evidence of an effect.')}</p></li>
+      <li><span class="key-dot key-dot--lab"></span><strong>{t('Лабораторное наблюдение', 'Laboratory observation')}</strong><p>{t('Механизм или измерение вне полноценного клинического вывода.', 'A mechanism or measurement that does not establish a clinical conclusion.')}</p></li>
+      <li><span class="key-dot key-dot--clinical"></span><strong>{t('Клинические данные', 'Clinical evidence')}</strong><p>{t('Исследования на людях; качество и ограничения показаны отдельно.', 'Human studies, with quality and limitations described separately.')}</p></li>
+      <li><span class="key-dot key-dot--none"></span><strong>{t('Доказательств нет', 'No evidence')}</strong><p>{t('Надёжных данных для заявленного эффекта не найдено.', 'No reliable evidence was found for the claimed effect.')}</p></li>
     </ul>
   </section>
 
-  <section class="section page-shell claims section-rule" aria-label="Разбор медицинских утверждений">
+  <section class="section page-shell claims section-rule" aria-label={t('Разбор медицинских утверждений', 'Assessment of medical claims')}>
     {medicine.map((record, index) => <EvidencePanel record={record} sources={sources} index={index} />)}
   </section>
 
   <section class="section page-shell limits section-rule" aria-labelledby="limits-title">
-    <div><p class="eyebrow">Короткий вывод</p><h2 id="limits-title" class="title">Осторожный эффект процедуры не равен силе камня</h2></div>
-    <div><p class="lede">Небольшие исследования допускают кратковременные изменения кровотока или отдельных параметров после массажа. Они не доказывают долговременное омоложение, лечение болезней или уникальное действие нефрита.</p><p>Если вам приятен прохладный гладкий инструмент, воспринимайте его как предмет ухода, соблюдайте гигиену и умеренное давление. Для диагноза и лечения выбирайте квалифицированного специалиста, а не обещание продавца.</p><a class="button button--ghost" href={withBase('/sources/')}>Открыть медицинские публикации</a></div>
+    <div><p class="eyebrow">{t('Короткий вывод', 'In brief')}</p><h2 id="limits-title" class="title">{t('Осторожный эффект процедуры не равен силе камня', 'A possible effect of massage is not a power of the stone')}</h2></div>
+    <div><p class="lede">{t('Небольшие исследования допускают кратковременные изменения кровотока или отдельных параметров после массажа. Они не доказывают долговременное омоложение, лечение болезней или уникальное действие нефрита.', 'Small studies suggest short-term changes in blood flow or selected measures after massage. They do not establish lasting rejuvenation, treatment of disease or a unique effect of nephrite.')}</p><p>{t('Если вам приятен прохладный гладкий инструмент, воспринимайте его как предмет ухода, соблюдайте гигиену и умеренное давление. Для диагноза и лечения выбирайте квалифицированного специалиста, а не обещание продавца.', 'If you enjoy a cool, smooth tool, treat it as a personal-care object, keep it clean and use moderate pressure. For diagnosis and treatment, turn to a qualified professional, not a seller’s promise.')}</p><a class="button button--ghost" href={href('/sources/')}>{t('Открыть медицинские публикации', 'Read the medical publications')}</a></div>
   </section>
 </BaseLayout>
 

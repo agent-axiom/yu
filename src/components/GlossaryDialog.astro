@@ -1,0 +1,76 @@
+---
+import { glossaryEntries } from '../i18n/glossary';
+import { localeFromPath, localizePath, translator, type Locale } from '../lib/i18n';
+
+interface Props { locale?: Locale; }
+const { locale = localeFromPath(Astro.url.pathname) } = Astro.props;
+const t = translator(locale);
+---
+
+<glossary-popup>
+  <dialog class="glossary-dialog" data-glossary-dialog aria-labelledby="glossary-dialog-label" lang={locale}>
+    <header class="glossary-dialog__header">
+      <p id="glossary-dialog-label">{t('Живой словарь', 'Living glossary')}</p>
+      <button type="button" data-glossary-close autofocus>{t('Закрыть словарь', 'Close glossary')}</button>
+    </header>
+    {glossaryEntries.map((entry) => (
+      <article data-glossary-entry={entry.id} aria-labelledby={`glossary-dialog-${entry.id}-title`} hidden>
+        <p class="glossary-dialog__origin">{entry.origin[locale]}</p>
+        <h2 id={`glossary-dialog-${entry.id}-title`}>{entry.title[locale]}</h2>
+        <p class="glossary-dialog__script"><span>{t('Написание', 'Written form')}</span><b lang={entry.language}>{entry.original}</b></p>
+        <div class="glossary-dialog__pronunciation"><p>{entry.pronunciation.text[locale]}</p><a href={entry.pronunciation.source.url}>{entry.pronunciation.source.label[locale]}</a></div>
+        <p class="glossary-dialog__definition">{entry.summary[locale]}</p>
+        <p class="glossary-dialog__context">{entry.context[locale]}</p>
+        <div class="glossary-dialog__sources"><p>{t('Опора для определения', 'Definition sources')}</p><ul>{entry.sources.map((source) => <li><a href={source.url}>{source.label[locale]}</a></li>)}</ul></div>
+        <footer class="glossary-dialog__footer">
+          <a href={localizePath(entry.related.path, locale)}>{entry.related.label[locale]}</a>
+          <a href={`${localizePath('/glossary/', locale)}#${entry.id}`}>{t('Статья в полном словаре', 'Entry in the full glossary')}</a>
+        </footer>
+      </article>
+    ))}
+  </dialog>
+</glossary-popup>
+
+<script>
+  import { bindGlossary } from '../lib/glossary';
+
+  class GlossaryPopup extends HTMLElement {
+    private cleanup?: () => void;
+    connectedCallback() {
+      this.cleanup?.();
+      const dialog = this.querySelector<HTMLDialogElement>('dialog[data-glossary-dialog]');
+      if (dialog) this.cleanup = bindGlossary(dialog);
+    }
+    disconnectedCallback() { this.cleanup?.(); }
+  }
+  if (!customElements.get('glossary-popup')) customElements.define('glossary-popup', GlossaryPopup);
+</script>
+
+<style>
+  glossary-popup { display: contents; }
+  .glossary-dialog { box-sizing: border-box; width: min(42rem, calc(100vw - 2rem)); max-height: min(88svh, 56rem); margin: auto; padding: 0; border: 1px solid #788b75; color: #243e30; background: var(--paper, #eee8d9); box-shadow: 0 2rem 7rem #0007; color-scheme: light; overscroll-behavior: contain; overflow: auto; }
+  .glossary-dialog:not([open]), [data-glossary-entry][hidden] { display: none; }
+  .glossary-dialog::backdrop { background: rgb(4 17 12 / 76%); }
+  .glossary-dialog__header { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem clamp(1.2rem,4vw,2.5rem); border-bottom: 1px solid #b7bead; background: #e5e2d3; }
+  .glossary-dialog__header > p { margin: 0; color: #44634d; font-size: .68rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+  .glossary-dialog__header button { flex-shrink: 0; min-height: 44px; padding: .5rem .75rem; border: 1px solid #738a72; color: #234c36; background: transparent; font-size: .75rem; cursor: pointer; }
+  .glossary-dialog__header button:hover { background: #d4dbc9; }
+  article { padding: clamp(1.2rem,4vw,2.5rem); }
+  .glossary-dialog__origin { margin: 0 0 .8rem; color: #516950; font-size: .72rem; }
+  h2 { margin: 0; color: #183c2c; font-family: var(--serif); font-size: clamp(2rem,5vw,3rem); font-weight: 400; line-height: 1.15; }
+  .glossary-dialog__script { display: flex; align-items: baseline; flex-wrap: wrap; gap: 1rem; margin: 1rem 0; }
+  .glossary-dialog__script span { color: #59715a; font-size: .66rem; letter-spacing: .08em; text-transform: uppercase; }
+  .glossary-dialog__script b { font-family: var(--serif); font-size: 1.6rem; font-weight: 400; }
+  .glossary-dialog__pronunciation { padding: .8rem 0 1rem; border-block: 1px solid #bdc3b1; font-size: .74rem; line-height: 1.6; }
+  .glossary-dialog__pronunciation p { margin: 0 0 .35rem; }
+  .glossary-dialog__definition { margin: 1.5rem 0 1rem; font-family: var(--serif); font-size: 1.18rem; line-height: 1.65; }
+  .glossary-dialog__context { margin: 0; color: #465e47; font-size: .88rem; line-height: 1.75; }
+  .glossary-dialog__sources { margin-top: 1.5rem; font-size: .72rem; line-height: 1.65; }
+  .glossary-dialog__sources > p { margin: 0 0 .5rem; color: #53694f; font-size: .62rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+  .glossary-dialog__sources ul { display: grid; gap: .4rem; margin: 0; padding: 0; list-style: none; }
+  .glossary-dialog a { color: #31583c; text-decoration-color: #91a184; }
+  .glossary-dialog a:hover { color: #102e1c; text-decoration-color: currentColor; }
+  .glossary-dialog :focus-visible { outline: 3px solid #875733; outline-offset: 4px; }
+  .glossary-dialog__footer { display: flex; flex-wrap: wrap; gap: 1rem 2rem; margin-top: 1.6rem; padding-top: 1.2rem; border-top: 1px solid #b7bead; font-size: .78rem; font-weight: 700; }
+  @media (max-width: 420px) { .glossary-dialog__header { align-items: flex-start; } .glossary-dialog__header > p { padding-top: .6rem; } }
+</style>

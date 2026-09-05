@@ -6,6 +6,8 @@ export function bindObjectExplorer(root: HTMLElement): () => void {
   const controls = root.querySelector<HTMLElement>('[data-object-controls]');
   const reset = root.querySelector<HTMLButtonElement>('[data-object-reset]');
   if (!viewport || !image || !zoom || !controls || !reset) return () => {};
+  const english = root.dataset.locale === 'en';
+  const numberFormat = new Intl.NumberFormat(english ? 'en-US' : 'ru-RU', { maximumFractionDigits: 2 });
 
   const output = root.querySelector<HTMLOutputElement>('[data-object-scale]');
   const details = [...root.querySelectorAll<HTMLButtonElement>('[data-object-detail]')];
@@ -22,8 +24,8 @@ export function bindObjectExplorer(root: HTMLElement): () => void {
     y = Math.min(100 - edge, Math.max(edge, y));
     image!.style.transform = `translate(${(50 - x) * scale}%, ${(50 - y) * scale}%) scale(${scale})`;
     zoom!.value = String(scale);
-    const label = `${String(scale).replace('.', ',')}×`;
-    zoom!.setAttribute('aria-valuetext', `Увеличение ${label}`);
+    const label = `${numberFormat.format(scale)}×`;
+    zoom!.setAttribute('aria-valuetext', `${english ? 'Zoom' : 'Увеличение'} ${label}`);
     if (output) output.value = label;
     root.dataset.zoomed = String(scale > 1);
   }

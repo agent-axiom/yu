@@ -1,6 +1,9 @@
 ---
 import SiteFooter from '../components/SiteFooter.astro';
 import SiteHeader from '../components/SiteHeader.astro';
+import GlossaryDialog from '../components/GlossaryDialog.astro';
+import { localeFromPath, localizePath, translator } from '../lib/i18n';
+import { withBase } from '../lib/urls';
 import '../styles/global.css';
 
 interface Props {
@@ -13,39 +16,59 @@ interface Props {
 const {
   title,
   description,
-  image = '/images/hero-jade.webp',
+  image,
   eyebrow,
 } = Astro.props;
-const siteName = '玉 · YU — живой нефрит';
+const locale = localeFromPath(Astro.url.pathname);
+const t = translator(locale);
+const siteName = t('玉 · YU — живой нефрит', '玉 · YU — jade, in context');
 const canonicalURL = new URL(Astro.url.pathname, Astro.site);
-const socialImage = new URL(image.replace(/^\//, ''), `${Astro.site}${import.meta.env.BASE_URL}`);
+const section = Astro.url.pathname.replace(/\/$/, '').split('/').at(-1) || 'home';
+const socialSection = ['history', 'mythology', 'material', 'medicine', 'sources', 'glossary'].includes(section) ? section : 'home';
+const socialImage = new URL(withBase(image ?? `/social/${locale}/${socialSection}.jpg`), Astro.site);
+const alternate = (language: 'ru' | 'en') => new URL(localizePath(Astro.url.pathname, language), Astro.site);
 ---
 
 <!doctype html>
-<html lang="ru">
+<html lang={locale}>
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width" />
     <meta name="theme-color" content="#07110f" />
     <meta name="description" content={description} />
+    <meta name="robots" content={['404', '404.html'].includes(section) ? 'noindex, follow' : 'index, follow'} />
     <meta property="og:type" content="website" />
-    <meta property="og:locale" content="ru_RU" />
+    <meta property="og:locale" content={locale === 'ru' ? 'ru_RU' : 'en_US'} />
+    <meta property="og:locale:alternate" content={locale === 'ru' ? 'en_US' : 'ru_RU'} />
     <meta property="og:site_name" content={siteName} />
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
     <meta property="og:image" content={socialImage} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:type" content="image/jpeg" />
+    <meta property="og:image:alt" content={`${title} · YU`} />
+    <meta property="og:url" content={canonicalURL} />
     <meta name="twitter:card" content="summary_large_image" />
     <link rel="canonical" href={canonicalURL} />
-    <link rel="icon" type="image/webp" href={`${import.meta.env.BASE_URL}images/jade-macro.webp`} />
+    <link rel="alternate" hreflang="ru" href={alternate('ru')} />
+    <link rel="alternate" hreflang="en" href={alternate('en')} />
+    <link rel="alternate" hreflang="x-default" href={alternate('ru')} />
+    <link rel="sitemap" href={withBase('/sitemap.xml')} />
+    <link rel="icon" type="image/webp" href={withBase('/images/jade-macro.webp')} />
+    <link rel="preload" href={withBase('/fonts/manrope-variable.ttf')} as="font" type="font/ttf" crossorigin />
+    <link rel="preload" href={withBase('/fonts/prata-regular.ttf')} as="font" type="font/ttf" crossorigin />
+    <link rel="stylesheet" href={withBase('/fonts/fonts.css')} />
     <title>{title} · YU</title>
   </head>
   <body>
-    <a class="skip-link" href="#main-content">Перейти к содержанию</a>
+    <a class="skip-link" href="#main-content">{t('Перейти к содержанию', 'Skip to content')}</a>
     <SiteHeader />
     <main id="main-content" data-eyebrow={eyebrow}>
       <slot />
     </main>
     <SiteFooter />
+    <GlossaryDialog />
     <script is:inline>
       document.documentElement.classList.add('js');
       const observed = document.querySelectorAll('.reveal');

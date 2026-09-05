@@ -13,7 +13,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:unit": "vitest run",
-    "test:browser": "playwright test"
+    "test:browser": "playwright test",
+    "social:generate": "node scripts/generate-social-images.mjs"
   },
   "dependencies": {
     "@astrojs/compiler": "2.13.1",

@@ -45,6 +45,21 @@ describe('object explorer', () => {
     expect(detail.getAttribute('aria-pressed')).toBe('false');
   });
 
+  it('formats English zoom labels during slider input, detail selection and reset', () => {
+    const { root, zoom } = fixture();
+    root.dataset.locale = 'en';
+    bindObjectExplorer(root);
+    expect(zoom.getAttribute('aria-valuetext')).toBe('Zoom 1×');
+    zoom.value = '1.25';
+    zoom.dispatchEvent(new Event('input'));
+    expect(zoom.getAttribute('aria-valuetext')).toBe('Zoom 1.25×');
+    expect(root.querySelector('output')!.value).toBe('1.25×');
+    root.querySelector<HTMLButtonElement>('[data-object-detail]')!.click();
+    expect(zoom.getAttribute('aria-valuetext')).toBe('Zoom 2.5×');
+    root.querySelector<HTMLButtonElement>('[data-object-reset]')!.click();
+    expect(zoom.getAttribute('aria-valuetext')).toBe('Zoom 1×');
+  });
+
   it('bounds keyboard panning and allows Escape to reset', () => {
     const { root, viewport, zoom, img } = fixture();
     bindObjectExplorer(root);

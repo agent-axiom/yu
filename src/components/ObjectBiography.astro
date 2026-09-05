@@ -1,52 +1,55 @@
 ---
 import { withBase } from '../lib/urls';
+import { localeFromPath, translator } from '../lib/i18n';
+const locale = localeFromPath(Astro.url.pathname);
+const t = translator(locale);
 const source = 'https://www.metmuseum.org/art/collection/search/49371';
 const chapters = [
-  { number: '01', label: 'Материал', title: 'Не обязательно зелёный', status: 'Данные каталога', text: 'Музей определяет материал как нефрит. На снимке он светлый, с охристыми и тёмными участками. Цвет фотографии сам по себе не позволяет определить минерал.' },
-  { number: '02', label: 'Изготовление', title: 'Круг — результат труда', status: 'Форма видна · технология требует исследования', text: 'Внешний контур и сквозное отверстие можно рассмотреть. Но по одному ракурсу нельзя восстановить последовательность работы или назвать инструменты этого мастера.' },
-  { number: '03', label: 'Использование', title: 'Предмет молчит о ритуале', status: 'Интерпретация', text: 'Met связывает подобные диски с ритуалом или высоким статусом. Это возможное объяснение, а не известная история использования именно этого bi.' },
-  { number: '04', label: 'Путь предмета', title: 'Здесь есть пробел', status: 'Не установлено по доступной карточке', text: 'Место находки, первый владелец и путь до музея в доступной записи не описаны. Не будем заполнять эту паузу красивой историей.' },
-  { number: '05', label: 'Музей', title: 'Теперь у него есть номер', status: 'Данные каталога', text: '17.118.43. The Metropolitan Museum of Art; Rogers Fund, 1917. Эта запись закрепляет музейную идентичность вещи, но не заменяет её древнюю биографию.' },
+  { number: '01', label: t('Материал', 'Material'), title: t('Не обязательно зелёный', 'Not necessarily green'), status: t('Данные каталога', 'Catalogue data'), text: t('Музей определяет материал как нефрит. На снимке он светлый, с охристыми и тёмными участками. Цвет фотографии сам по себе не позволяет определить минерал.', 'The museum identifies the material as nephrite. In the photograph it is pale, with ochre and dark areas. Colour in a photograph alone cannot identify a mineral.') },
+  { number: '02', label: t('Изготовление', 'Making'), title: t('Круг — результат труда', 'A circle made through work'), status: t('Форма видна · технология требует исследования', 'Visible form · technique requires research'), text: t('Внешний контур и сквозное отверстие можно рассмотреть. Но по одному ракурсу нельзя восстановить последовательность работы или назвать инструменты этого мастера.', 'We can examine the outer contour and the hole through the centre. But a single view cannot reveal the sequence of work or identify this maker’s tools.') },
+  { number: '03', label: t('Использование', 'Use'), title: t('Предмет молчит о ритуале', 'Silent about its ritual'), status: t('Интерпретация', 'Interpretation'), text: t('Met связывает подобные диски с ритуалом или высоким статусом. Это возможное объяснение, а не известная история использования именно этого bi.', 'The Met associates similar disks with ritual or high status. This is a possible interpretation, not a documented history of how this particular bi was used.') },
+  { number: '04', label: t('Путь предмета', 'The object’s journey'), title: t('Здесь есть пробел', 'A gap in the record'), status: t('Не установлено по доступной карточке', 'Not established by the available record'), text: t('Место находки, первый владелец и путь до музея в доступной записи не описаны. Не будем заполнять эту паузу красивой историей.', 'The available record does not describe its findspot, first owner or route to the museum. We leave this gap open rather than fill it with a story.') },
+  { number: '05', label: t('Музей', 'Museum'), title: t('Теперь у него есть номер', 'Now it has a number'), status: t('Данные каталога', 'Catalogue data'), text: t('17.118.43. The Metropolitan Museum of Art; Rogers Fund, 1917. Эта запись закрепляет музейную идентичность вещи, но не заменяет её древнюю биографию.', '17.118.43. The Metropolitan Museum of Art; Rogers Fund, 1917. This record establishes the object’s museum identity, but does not replace its ancient biography.') },
 ];
 ---
 
 <section id="object-biography" class="object-biography section" aria-labelledby="object-title">
   <div class="page-shell">
     <header class="object-heading">
-      <div><p class="eyebrow">Кабинет предмета · 01</p><h2 id="object-title" class="title">Один диск.<br />Пять жизней.</h2></div>
-      <p>Попробуйте прочитать вещь до музейной этикетки. Сначала — поверхность и форма. Затем — то, что известно, что предполагают и о чём пока нельзя рассказать.</p>
+      <div><p class="eyebrow">{t('Кабинет предмета · 01', 'Object study · 01')}</p><h2 id="object-title" class="title">{t('Один диск.', 'One disk.')}<br />{t('Пять жизней.', 'Five lives.')}</h2></div>
+      <p>{t('Попробуйте прочитать вещь до музейной этикетки. Сначала — поверхность и форма. Затем — то, что известно, что предполагают и о чём пока нельзя рассказать.', 'Try reading the object before its museum label. First, surface and form. Then what is known, what is inferred, and what we cannot yet tell.')}</p>
     </header>
     <div class="object-spread">
       <div class="object-sticky">
-        <div data-object-explorer>
+        <div data-object-explorer data-locale={locale}>
           <figure>
-            <div class="object-viewport" data-object-viewport role="group" aria-label="Осмотр диска bi" aria-describedby="object-help">
-              <img data-object-image src={withBase('/images/artifacts/liangzhu-bi.webp')} alt="Нефритовый диск bi: светлая пятнистая поверхность, круглое отверстие и неровность правого края" width="1200" height="901" loading="lazy" draggable="false" />
+            <div class="object-viewport" data-object-viewport role="group" aria-label={t('Осмотр диска bi', 'Examine the bi disk')} aria-describedby="object-help">
+              <img data-object-image src={withBase('/images/artifacts/liangzhu-bi.webp')} alt={t('Нефритовый диск bi: светлая пятнистая поверхность, круглое отверстие и неровность правого края', 'Nephrite bi disk with a pale mottled surface, a circular hole and an irregularity on the right edge')} width="1200" height="901" loading="lazy" draggable="false" />
               <span class="object-registration" aria-hidden="true">YU / 17.118.43</span>
             </div>
-            <figcaption><span>Диск bi · культура Лянчжу</span><span>Середина III тыс. до н. э.</span></figcaption>
+            <figcaption><span>{t('Диск bi · культура Лянчжу', 'Bi disk · Liangzhu culture')}</span><span>{t('Середина III тыс. до н. э.', 'Mid-3rd millennium BCE')}</span></figcaption>
           </figure>
           <div data-object-controls hidden>
-            <div class="object-toolbar"><label for="object-zoom">Ближе</label><input id="object-zoom" data-object-zoom type="range" min="1" max="2.5" step="0.25" value="1" /><output data-object-scale for="object-zoom">1×</output><button type="button" data-object-reset aria-label="Показать диск целиком">Целиком ↺</button></div>
-            <div class="object-details" role="group" aria-label="Рассмотреть деталь">
-              <button type="button" data-object-detail data-x="49" data-y="50" aria-pressed="false">01 · Отверстие</button>
-              <button type="button" data-object-detail data-x="40" data-y="30" aria-pressed="false">02 · Поверхность</button>
-              <button type="button" data-object-detail data-x="75" data-y="50" aria-pressed="false">03 · Край</button>
+            <div class="object-toolbar"><label for="object-zoom">{t('Ближе', 'Zoom')}</label><input id="object-zoom" data-object-zoom type="range" min="1" max="2.5" step="0.25" value="1" /><output data-object-scale for="object-zoom">1×</output><button type="button" data-object-reset aria-label={t('Показать диск целиком', 'Show the whole disk')}>{t('Целиком', 'Reset')} ↺</button></div>
+            <div class="object-details" role="group" aria-label={t('Рассмотреть деталь', 'Explore a detail')}>
+              <button type="button" data-object-detail data-x="49" data-y="50" aria-pressed="false">01 · {t('Отверстие', 'Opening')}</button>
+              <button type="button" data-object-detail data-x="40" data-y="30" aria-pressed="false">02 · {t('Поверхность', 'Surface')}</button>
+              <button type="button" data-object-detail data-x="75" data-y="50" aria-pressed="false">03 · {t('Край', 'Edge')}</button>
             </div>
-            <p id="object-help" class="object-help">Увеличьте и перемещайте снимок пальцем или мышью. С клавиатуры: фокус на снимке, стрелки — осмотр, Esc — целиком.</p>
+            <p id="object-help" class="object-help">{t('Увеличьте и перемещайте снимок пальцем или мышью. С клавиатуры: фокус на снимке, стрелки — осмотр, Esc — целиком.', 'Zoom in and drag the photograph with a finger or mouse. Keyboard: focus the image, use arrow keys to explore, and Esc to reset.')}</p>
           </div>
           <details class="looking-notes">
-            <summary>На что смотреть?</summary>
-            <ol><li><strong>Отверстие.</strong> Рассмотрите внутренний контур. Он виден, но назначение отверстия снимок не объясняет.</li><li><strong>Поверхность.</strong> Пятна и цветовые переходы — наблюдение, не диагноз состава или обработки.</li><li><strong>Край.</strong> Справа заметна неровность. Когда и как она возникла, по фотографии неизвестно.</li></ol>
+            <summary>{t('На что смотреть?', 'What should I look for?')}</summary>
+            <ol><li><strong>{t('Отверстие.', 'Opening.')}</strong> {t('Рассмотрите внутренний контур. Он виден, но назначение отверстия снимок не объясняет.', 'Examine the inner contour. It is visible, but the photograph does not explain the purpose of the hole.')}</li><li><strong>{t('Поверхность.', 'Surface.')}</strong> {t('Пятна и цветовые переходы — наблюдение, не диагноз состава или обработки.', 'Spots and colour transitions are observations, not a diagnosis of composition or treatment.')}</li><li><strong>{t('Край.', 'Edge.')}</strong> {t('Справа заметна неровность. Когда и как она возникла, по фотографии неизвестно.', 'An irregularity is visible on the right. The photograph cannot tell us when or how it formed.')}</li></ol>
           </details>
-          <p class="object-credit"><a href={source}>Карточка и фотография The Met ↗</a><span>Public Domain · увеличение до 2,5×</span></p>
+          <p class="object-credit"><a href={source}>{t('Карточка и фотография The Met', 'Record and photograph: The Met')} ↗</a><span>{t('Public Domain · увеличение до 2,5×', 'Public Domain · zoom up to 2.5×')}</span></p>
         </div>
       </div>
       <ol class="object-chapters">
         {chapters.map((chapter) => <li><span class="chapter-number" aria-hidden="true">{chapter.number}</span><div><p class="chapter-label">{chapter.label}</p><h3>{chapter.title}</h3><p>{chapter.text}</p><span class="chapter-status">{chapter.status}</span></div></li>)}
       </ol>
     </div>
-    <p class="object-footnote">Это биография с открытыми вопросами. <a href={source}>Каталожная запись Met</a> — опора для датировки, материала и музейных данных; наблюдения по снимку и интерпретации обозначены отдельно.</p>
+    <p class="object-footnote">{t('Это биография с открытыми вопросами.', 'This is a biography with open questions.')} <a href={source}>{t('Каталожная запись Met', 'The Met catalogue record')}</a> {t('— опора для датировки, материала и музейных данных; наблюдения по снимку и интерпретации обозначены отдельно.', 'supports the dating, material and museum information; observations from the photograph and interpretations are labelled separately.')}</p>
   </div>
 </section>
 
