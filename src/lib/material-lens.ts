@@ -4,13 +4,18 @@ export function bindMaterialLens(root: HTMLElement): () => void {
   const controls = root.querySelector<HTMLElement>('[data-lens-controls]');
   const output = root.querySelector<HTMLOutputElement>('[data-lens-value]');
   if (!input || !controls || !output) return () => {};
+  const english = root.dataset.locale === 'en';
 
   const update = () => {
     const value = Math.min(100, Math.max(0, Number(input.value)));
     input.value = String(value);
     root.style.setProperty('--lens', `${value}%`);
-    input.setAttribute('aria-valuetext', `Область схемы: нефрит ${value}%, жадеит ${100 - value}%`);
-    output.textContent = `Нефрит ${value}% · Жадеит ${100 - value}%`;
+    input.setAttribute('aria-valuetext', english
+      ? `Diagram area: nephrite ${value}%, jadeite ${100 - value}%`
+      : `Область схемы: нефрит ${value}%, жадеит ${100 - value}%`);
+    output.textContent = english
+      ? `Nephrite ${value}% · Jadeite ${100 - value}%`
+      : `Нефрит ${value}% · Жадеит ${100 - value}%`;
   };
 
   input.addEventListener('input', update);

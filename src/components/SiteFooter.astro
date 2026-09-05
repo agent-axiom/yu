@@ -1,15 +1,17 @@
 ---
-import { withBase } from '../lib/urls';
+import { localeFromPath, localizePath, translator } from '../lib/i18n';
+const locale = localeFromPath(Astro.url.pathname);
+const t = translator(locale);
 ---
 
 <footer class="site-footer">
   <div>
     <p class="site-footer__mark" aria-hidden="true">玉</p>
-    <p><strong>YU — живой нефрит</strong><br />Культурная история камня без смешения знания и легенды.</p>
+    <p><strong>{t('YU — живой нефрит', 'YU — jade, in context')}</strong><br />{t('Культурная история камня без смешения знания и легенды.', 'A cultural history of stone, with evidence and legend in perspective.')}</p>
   </div>
   <div class="site-footer__meta">
-    <p>Историко-просветительский проект</p>
-    <a href={withBase('/sources/')}>Редакционная политика и источники</a>
+    <p>{t('Историко-просветительский проект', 'An independent history and learning project')}</p>
+    <a href={localizePath('/sources/', locale)}>{t('Редакционная политика и источники', 'Editorial policy and sources')}</a>
     <p>© {new Date().getFullYear()}</p>
   </div>
 </footer>

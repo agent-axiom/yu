@@ -1,5 +1,5 @@
 ---
-import { withBase } from '../lib/urls';
+import { localeFromPath, localizePath } from '../lib/i18n';
 
 interface Props {
   number: string;
@@ -11,7 +11,7 @@ interface Props {
 const { number, href, title, description, accent } = Astro.props;
 ---
 
-<a class="route-card" href={withBase(href)} style={`--card-accent:${accent}`}>
+<a class="route-card" href={localizePath(href, localeFromPath(Astro.url.pathname))} style={`--card-accent:${accent}`}>
   <span class="route-card__number">{number}</span>
   <div>
     <h3>{title}</h3>

@@ -1,12 +1,15 @@
 ---
 import { withBase } from '../lib/urls';
+import { localeFromPath, localizePath, translator } from '../lib/i18n';
+const locale = localeFromPath(Astro.url.pathname);
+const t = translator(locale);
 ---
 
 <jade-hero class="hero">
   <img
     class="hero__image"
     src={withBase('/images/hero-jade.webp')}
-    alt="Необработанная зелёная глыба нефрита в низком свете"
+    alt={t('Необработанная зелёная глыба нефрита в низком свете', 'A rough green nephrite boulder in low light')}
     width="1774"
     height="887"
     fetchpriority="high"
@@ -14,15 +17,15 @@ import { withBase } from '../lib/urls';
   <div class="hero__veil" aria-hidden="true"></div>
   <div class="hero__light" aria-hidden="true"></div>
   <div class="hero__content page-shell">
-    <p class="hero__kicker"><span>玉</span> yù · jade · нефрит</p>
-    <h1>Камень,<br />который стал<br /><em>идеей</em></h1>
-    <p class="hero__intro">От неолитических погребений до современных роллеров — исследуем, где заканчивается минерал и начинается культурная память.</p>
+    <p class="hero__kicker"><span lang="zh">玉</span> {t('yù · jade · нефрит', 'yù · jade · nephrite')}</p>
+    <h1>{t('Камень,', 'A stone')}<br />{t('который стал', 'that became')}<br /><em>{t('идеей', 'an idea')}</em></h1>
+    <p class="hero__intro">{t('От неолитических погребений до современных роллеров — исследуем, где заканчивается минерал и начинается культурная память.', 'From Neolithic burials to modern facial rollers: exploring where the mineral ends and cultural memory begins.')}</p>
     <div class="hero__actions">
-      <a class="button" href="#routes">Начать исследование <span aria-hidden="true">↓</span></a>
-      <a class="hero__source-link" href={withBase('/sources/')}>Как мы проверяем факты</a>
+      <a class="button" href="#routes">{t('Начать исследование', 'Begin exploring')} <span aria-hidden="true">↓</span></a>
+      <a class="hero__source-link" href={localizePath('/sources/', locale)}>{t('Как мы проверяем факты', 'How we check the facts')}</a>
     </div>
   </div>
-  <p class="hero__axis" aria-hidden="true">история · миф · материя · свидетельство</p>
+  <p class="hero__axis" aria-hidden="true">{t('история · миф · материя · свидетельство', 'history · myth · matter · evidence')}</p>
 </jade-hero>
 
 <script>

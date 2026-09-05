@@ -1,0 +1,74 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { glossaryEntries } from '../i18n/glossary';
+import { localeFromPath, localizePath, translator } from '../lib/i18n';
+
+const locale = localeFromPath(Astro.url.pathname);
+const t = translator(locale);
+---
+
+<BaseLayout title={t('Живой словарь', 'Living glossary')} description={t('Шесть слов о нефрите: jade, nephrite, jadeite, yù, bi и pounamu. Произношение, культурный контекст и проверенные источники.', 'Six words around jade: jade, nephrite, jadeite, yù, bi and pounamu. Pronunciation, cultural context and verified sources.')}>
+  <header class="glossary-hero page-shell">
+    <p class="eyebrow">{t('Язык материала · 06 слов', 'The language of material · 06 words')}</p>
+    <h1 class="display">{t('Похожие слова. Разные миры.', 'Related words. Different worlds.')}</h1>
+    <p class="lede">{t('Перевод помогает приблизиться, но не делает слова взаимозаменяемыми. Здесь у каждого имени — собственное значение, звучание и культурный контекст.', 'Translation brings us closer, but it does not make words interchangeable. Each name has its own meaning, sound and cultural context.')}</p>
+    <nav class="glossary-index" aria-label={t('Термины словаря', 'Glossary terms')}>
+      {glossaryEntries.map((entry) => <a href={`#${entry.id}`}>{entry.title[locale]}</a>)}
+    </nav>
+  </header>
+
+  <div class="glossary-sheets section-rule">
+    <div class="page-shell">
+      {glossaryEntries.map((entry, index) => (
+        <article id={entry.id} class="glossary-entry" aria-labelledby={`glossary-${entry.id}-title`}>
+          <header class="glossary-entry__head">
+            <span class="glossary-entry__number" aria-hidden="true">0{index + 1}</span>
+            <p class="glossary-entry__origin">{entry.origin[locale]}</p>
+            <h2 id={`glossary-${entry.id}-title`}>{entry.title[locale]}</h2>
+            <p class="glossary-entry__script"><span>{t('Написание', 'Written form')}</span><b lang={entry.language}>{entry.original}</b></p>
+            <div class="glossary-entry__pronunciation"><p>{entry.pronunciation.text[locale]}</p><a href={entry.pronunciation.source.url}>{entry.pronunciation.source.label[locale]}</a></div>
+          </header>
+          <div class="glossary-entry__body">
+            <p class="glossary-entry__definition">{entry.summary[locale]}</p>
+            <p class="glossary-entry__context">{entry.context[locale]}</p>
+            <a class="glossary-entry__related" href={localizePath(entry.related.path, locale)}>{entry.related.label[locale]}</a>
+            <footer class="glossary-entry__sources"><h3>{t('Опора для определения', 'Definition sources')}</h3><ul>{entry.sources.map((source) => <li><a href={source.url}>{source.label[locale]}</a></li>)}</ul></footer>
+          </div>
+        </article>
+      ))}
+      <aside class="glossary-note"><p>{t('Короткие определения — редакторские пересказы, не цитаты. Произношение указано для языка исходного написания; пиньинь сохраняет обозначения тонов. Внешняя запись pounamu принадлежит Tātai Aho Rau и открывается на сайте источника.', 'These short definitions are editorial summaries, not quotations. Pronunciation refers to the language of the written form; pinyin retains its tone marks. The external pounamu recording belongs to Tātai Aho Rau and opens on the source website.')}</p></aside>
+    </div>
+  </div>
+</BaseLayout>
+
+<style>
+  .glossary-hero { padding-top: clamp(10rem,20vh,15rem); padding-bottom: clamp(3rem,7vw,6rem); }
+  .glossary-hero .display { max-width: 14ch; }
+  .glossary-hero .lede { max-width: 54ch; margin-top: 2rem; }
+  .glossary-index { display: flex; flex-wrap: wrap; gap: .6rem; margin-top: 2.5rem; }
+  .glossary-index a { display: inline-flex; align-items: center; min-height: 44px; padding: .45rem .9rem; border: 1px solid var(--line); color: var(--jade); font-size: .8rem; text-decoration: none; }
+  .glossary-index a:hover { background: var(--jade-deep); }
+  .glossary-sheets { background: var(--paper); color: #243f30; }
+  .glossary-entry { display: grid; grid-template-columns: minmax(0,.8fr) minmax(0,1.2fr); gap: clamp(2rem,7vw,7rem); padding-block: clamp(3rem,6vw,6rem); border-bottom: 1px solid #b6c0ab; scroll-margin-top: 2rem; }
+  .glossary-entry__number { display: block; margin-bottom: 1rem; color: #698365; font-family: var(--serif); font-size: 1.5rem; }
+  .glossary-entry__origin { margin: 0 0 .8rem; color: #4c6b4d; font-size: .7rem; }
+  .glossary-entry h2 { margin: 0; color: #183c29; font-family: var(--serif); font-size: clamp(2.1rem,4vw,3.8rem); font-weight: 400; line-height: 1.15; }
+  .glossary-entry__script { display: flex; flex-wrap: wrap; align-items: baseline; gap: .5rem 1rem; margin: 1.2rem 0; }
+  .glossary-entry__script > span { color: #617959; font-size: .62rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+  .glossary-entry__script > b { font-family: var(--serif); font-size: 2rem; font-weight: 400; }
+  .glossary-entry__pronunciation { max-width: 42ch; font-size: .75rem; line-height: 1.7; }
+  .glossary-entry__pronunciation p { margin-bottom: .3rem; }
+  .glossary-entry__body { align-self: center; }
+  .glossary-entry__definition { margin: 0; font-family: var(--serif); font-size: clamp(1.2rem,1.8vw,1.65rem); line-height: 1.65; }
+  .glossary-entry__context { margin: 1.4rem 0; color: #4a6147; font-size: .95rem; line-height: 1.8; }
+  .glossary-entry__related { display: inline-block; margin: .5rem 0 1.8rem; font-size: .85rem; font-weight: 700; }
+  .glossary-entry__sources { border-top: 1px solid #bec6b4; padding-top: 1.2rem; }
+  .glossary-entry__sources h3 { margin: 0 0 .5rem; color: #536d4e; font-size: .64rem; letter-spacing: .1em; text-transform: uppercase; }
+  .glossary-entry__sources ul { display: grid; gap: .45rem; margin: 0; padding: 0; list-style: none; font-size: .75rem; }
+  .glossary-sheets a { color: #365b38; text-decoration-color: #91a482; text-underline-offset: .2em; }
+  .glossary-sheets a:hover { color: #173b20; text-decoration-color: currentColor; }
+  .glossary-sheets :focus-visible { outline-color: #875733; }
+  .glossary-note { max-width: 80ch; padding-block: 3rem; color: #536d4f; font-size: .75rem; line-height: 1.8; }
+  .glossary-note p { margin: 0; }
+  @media (max-width: 700px) { .glossary-entry { grid-template-columns: 1fr; gap: 2rem; } .glossary-entry__pronunciation { max-width: none; } }
+</style>

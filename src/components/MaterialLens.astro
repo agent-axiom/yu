@@ -1,32 +1,35 @@
 ---
 import type { CollectionEntry } from 'astro:content';
+import { localeFromPath, translator } from '../lib/i18n';
+const locale = localeFromPath(Astro.url.pathname);
+const t = translator(locale);
 
 interface Props { materials: CollectionEntry<'materials'>[]; }
 const { materials } = Astro.props;
 const nephrite = materials.find(({ id }) => id === 'nephrite')?.data;
 const jadeite = materials.find(({ id }) => id === 'jadeite')?.data;
 const rows = [
-  ['Минеральная семья', nephrite?.family, jadeite?.family],
-  ['Химическая формула', nephrite?.chemistry, jadeite?.chemistry],
-  ['Твёрдость', nephrite?.hardness, jadeite?.hardness],
-  ['Структура', nephrite?.structure, jadeite?.structure],
-  ['Ударная вязкость', nephrite?.toughness, jadeite?.toughness],
+  [t('Минеральная семья', 'Mineral family'), nephrite?.family, jadeite?.family],
+  [t('Химическая формула', 'Chemical formula'), nephrite?.chemistry, jadeite?.chemistry],
+  [t('Твёрдость', 'Hardness'), nephrite?.hardness, jadeite?.hardness],
+  [t('Структура', 'Structure'), nephrite?.structure, jadeite?.structure],
+  [t('Ударная вязкость', 'Toughness'), nephrite?.toughness, jadeite?.toughness],
 ];
 ---
 
-<material-lens class="lens" style="--lens:50%">
+<material-lens class="lens" style="--lens:50%" data-locale={locale}>
   <figure class="lens__figure">
     <figcaption>
-      <p class="lens__notice">Объяснительные схемы · не микрофотографии, не диагностика</p>
+      <p class="lens__notice">{t('Объяснительные схемы · не микрофотографии, не диагностика', 'Explanatory diagrams · not micrographs, not a diagnostic tool')}</p>
       <div class="lens__key">
-        <div><span>01 · Нефрит</span><h3>Волокна</h3><p>Тонкие кристаллы образуют плотное переплетение, подобное войлоку.</p></div>
-        <div><span>02 · Жадеит</span><h3>Зёрна</h3><p>Кристаллы обычно складываются в плотную зернистую мозаику.</p></div>
+        <div><span>01 · {t('Нефрит', 'Nephrite')}</span><h3>{t('Волокна', 'Fibres')}</h3><p>{t('Тонкие кристаллы образуют плотное переплетение, подобное войлоку.', 'Fine crystals form a dense, felt-like interwoven structure.')}</p></div>
+        <div><span>02 · {t('Жадеит', 'Jadeite')}</span><h3>{t('Зёрна', 'Grains')}</h3><p>{t('Кристаллы обычно складываются в плотную зернистую мозаику.', 'Crystals typically form a dense mosaic of interlocking grains.')}</p></div>
       </div>
     </figcaption>
     <div class="lens__visual">
       <svg class="lens__diagram lens__nephrite" data-structure="fibres" viewBox="0 0 960 480" preserveAspectRatio="xMidYMid slice" role="img" aria-labelledby="nephrite-scheme-title nephrite-scheme-desc">
-        <title id="nephrite-scheme-title">Схема структуры нефрита</title>
-        <desc id="nephrite-scheme-desc">Пучки тонких вытянутых волокон переплетаются в разных направлениях. Условный рисунок без масштаба.</desc>
+        <title id="nephrite-scheme-title">{t('Схема структуры нефрита', 'Diagram of nephrite structure')}</title>
+        <desc id="nephrite-scheme-desc">{t('Пучки тонких вытянутых волокон переплетаются в разных направлениях. Условный рисунок без масштаба.', 'Bundles of fine, elongated fibres interweave in different directions. A schematic drawing, not to scale.')}</desc>
         <defs>
           <g id="nephrite-fibre-bundle" fill="none" stroke-linecap="round">
             <path d="M-20 11 C65 -24 122 69 220 7" stroke="#bdc7a4" stroke-width="3" />
@@ -54,8 +57,8 @@ const rows = [
         <rect width="960" height="480" fill="url(#nephrite-fibre-field)" />
       </svg>
       <svg class="lens__diagram lens__jadeite" data-structure="grains" viewBox="0 0 960 480" preserveAspectRatio="xMidYMid slice" role="img" aria-labelledby="jadeite-scheme-title jadeite-scheme-desc">
-        <title id="jadeite-scheme-title">Схема структуры жадеита</title>
-        <desc id="jadeite-scheme-desc">Разнонаправленные угловатые зёрна плотно примыкают друг к другу. Условный рисунок без масштаба.</desc>
+        <title id="jadeite-scheme-title">{t('Схема структуры жадеита', 'Diagram of jadeite structure')}</title>
+        <desc id="jadeite-scheme-desc">{t('Разнонаправленные угловатые зёрна плотно примыкают друг к другу. Условный рисунок без масштаба.', 'Angular grains in different orientations fit tightly together. A schematic drawing, not to scale.')}</desc>
         <defs>
           <pattern id="jadeite-grain-field" width="360" height="280" patternUnits="userSpaceOnUse">
             <rect width="360" height="280" fill="#2e5946" />
@@ -86,16 +89,16 @@ const rows = [
       </svg>
       <div class="lens__divider" aria-hidden="true"><span>↔</span></div>
     </div>
-    <p class="lens__limits" id="material-lens-limits">Авторские рисунки без масштаба: цвет, размер и форма элементов условны. Они показывают различие структур, а не внешний вид конкретного образца.</p>
+    <p class="lens__limits" id="material-lens-limits">{t('Авторские рисунки без масштаба: цвет, размер и форма элементов условны. Они показывают различие структур, а не внешний вид конкретного образца.', 'Original drawings, not to scale: colour, size and shape are illustrative. They show structural differences, not the appearance of a particular specimen.')}</p>
   </figure>
   <div class="lens__control" data-lens-controls hidden>
-    <div class="lens__control-heading"><label for="material-lens-control">Доля схемы нефрита</label><output data-lens-value for="material-lens-control" aria-live="off">Нефрит 50% · Жадеит 50%</output></div>
-    <input id="material-lens-control" type="range" min="0" max="100" step="1" value="50" aria-describedby="material-lens-help material-lens-limits" aria-valuetext="Область схемы: нефрит 50%, жадеит 50%" />
-    <p id="material-lens-help">Сдвиньте границу ползунком или клавишами ← →. Проценты означают только видимую область рисунка — не состав камня.</p>
+    <div class="lens__control-heading"><label for="material-lens-control">{t('Доля схемы нефрита', 'Nephrite diagram share')}</label><output data-lens-value for="material-lens-control" aria-live="off">{t('Нефрит 50% · Жадеит 50%', 'Nephrite 50% · Jadeite 50%')}</output></div>
+    <input id="material-lens-control" type="range" min="0" max="100" step="1" value="50" aria-describedby="material-lens-help material-lens-limits" aria-valuetext={t('Область схемы: нефрит 50%, жадеит 50%', 'Diagram area: nephrite 50%, jadeite 50%')} />
+    <p id="material-lens-help">{t('Сдвиньте границу ползунком или клавишами ← →. Проценты означают только видимую область рисунка — не состав камня.', 'Move the boundary with the slider or ← → keys. Percentages describe only the visible drawing area, not the composition of a stone.')}</p>
   </div>
-  <div class="comparison" role="region" aria-label="Сравнение нефрита и жадеита" tabindex="0">
+  <div class="comparison" role="region" aria-label={t('Сравнение нефрита и жадеита', 'Nephrite and jadeite comparison')} tabindex="0">
     <table>
-      <thead><tr><th scope="col">Свойство</th><th scope="col">Нефрит</th><th scope="col">Жадеит</th></tr></thead>
+      <thead><tr><th scope="col">{t('Свойство', 'Property')}</th><th scope="col">{t('Нефрит', 'Nephrite')}</th><th scope="col">{t('Жадеит', 'Jadeite')}</th></tr></thead>
       <tbody>{rows.map((row) => <tr><th scope="row">{row[0]}</th><td>{row[1]}</td><td>{row[2]}</td></tr>)}</tbody>
     </table>
   </div>

@@ -1,35 +1,45 @@
 ---
-import { withBase } from '../lib/urls';
+import { localeFromPath, localizePath, translator } from '../lib/i18n';
+
+const locale = localeFromPath(Astro.url.pathname);
+const t = translator(locale);
+const href = (path: string) => localizePath(path, locale);
 
 const items = [
-  { href: '/', label: 'Главная' },
-  { href: '/history/', label: 'История' },
-  { href: '/mythology/', label: 'Мифология' },
-  { href: '/material/', label: 'Материал' },
-  { href: '/medicine/', label: 'Медицина' },
-  { href: '/sources/', label: 'Источники' },
+  { href: '/', label: t('Главная', 'Home') },
+  { href: '/history/', label: t('История', 'History') },
+  { href: '/mythology/', label: t('Мифология', 'Mythology') },
+  { href: '/material/', label: t('Материал', 'Material') },
+  { href: '/medicine/', label: t('Медицина', 'Medicine') },
+  { href: '/glossary/', label: t('Словарь', 'Glossary') },
+  { href: '/sources/', label: t('Источники', 'Sources') },
 ];
 const currentPath = Astro.url.pathname;
 ---
 
 <site-navigation class="site-nav">
-  <a class="brand" href={withBase('/')} aria-label="YU — на главную">
+  <a class="brand" href={href('/')} aria-label={t('YU — на главную', 'YU — home')}>
     <span class="brand__mark" aria-hidden="true">玉</span>
     <span class="brand__name">YU</span>
-    <span class="brand__descriptor">живой нефрит</span>
+    <span class="brand__descriptor">{t('живой нефрит', 'jade, in context')}</span>
   </a>
   <button class="site-nav__toggle" type="button" aria-expanded="false" aria-controls="primary-navigation">
-    <span>Меню</span>
+    <span>{t('Меню', 'Menu')}</span>
     <span class="site-nav__toggle-mark" aria-hidden="true"></span>
   </button>
-  <nav id="primary-navigation" class="site-nav__links" aria-label="Основная навигация">
+  <nav id="primary-navigation" class="site-nav__links" aria-label={t('Основная навигация', 'Main navigation')}>
     {items.map((item) => {
-      const href = withBase(item.href);
+      const itemHref = href(item.href);
       const active = item.href === '/'
-        ? currentPath === href || currentPath === `${href}/`
-        : currentPath.startsWith(href);
-      return <a href={withBase(item.href)} aria-current={active ? 'page' : undefined}>{item.label}</a>;
+        ? currentPath === itemHref
+        : currentPath.startsWith(itemHref);
+      return <a href={itemHref} aria-current={active ? 'page' : undefined}>{item.label}</a>;
     })}
+  </nav>
+  <nav class="language-switch" aria-label={t('Язык сайта', 'Site language')}>
+    <a href={localizePath(currentPath, 'ru')} lang="ru" hreflang="ru" aria-current={locale === 'ru' ? 'true' : undefined} data-language-link>RU<span class="language-switch__name"> — Русский</span></a>
+    <span aria-hidden="true">/</span>
+    <a href={localizePath(currentPath, 'en')} lang="en" hreflang="en" aria-current={locale === 'en' ? 'true' : undefined} data-language-link>EN<span class="language-switch__name"> — English</span></a>
   </nav>
 </site-navigation>
 
@@ -47,4 +57,14 @@ const currentPath = Astro.url.pathname;
     }
   }
   customElements.define('site-navigation', SiteNavigation);
+
+  const links = document.querySelectorAll<HTMLAnchorElement>('[data-language-link]');
+  const syncLanguageLinks = () => links.forEach((link) => {
+    const url = new URL(link.href);
+    url.search = location.search;
+    url.hash = location.hash;
+    link.href = url.href;
+  });
+  syncLanguageLinks();
+  window.addEventListener('hashchange', syncLanguageLinks);
 </script>

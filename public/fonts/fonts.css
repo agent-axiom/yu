@@ -1,0 +1,15 @@
+/* Self-hosted originals: Google Fonts, SIL Open Font License 1.1. See adjacent licenses. */
+@font-face {
+  font-family: 'Manrope';
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url('./manrope-variable.ttf') format('truetype');
+}
+@font-face {
+  font-family: 'Prata';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./prata-regular.ttf') format('truetype');
+}

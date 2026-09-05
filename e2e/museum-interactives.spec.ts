@@ -1,11 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
 
-// External font availability is not part of these local interaction contracts.
-// Exercise the site's declared fallback fonts deterministically.
-test.beforeEach(async ({ page }) => {
-  await page.route(/^https:\/\/fonts\.(googleapis|gstatic)\.com\//, (route) => route.abort());
-});
-
 async function noOverflow(page: Page) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
 }

@@ -1,59 +1,62 @@
 ---
+import { localeFromPath, translator } from '../lib/i18n';
+const locale = localeFromPath(Astro.url.pathname);
+const t = translator(locale);
 const witnesses = [
   {
     id: 'hanfeizi',
-    date: 'III век до н. э.*',
-    author: '«Хань Фэй-цзы»',
-    kind: 'Философская притча',
-    reference: 'Глава 13 · «Хэ Ши»',
-    title: 'Ценность, которую не распознали',
-    storyTime: 'Древнее Чу: правления Ли, У и Вэня',
-    textTime: 'Поздняя эпоха Сражающихся царств',
-    datingNote: '*Традиционная датировка корпуса, приписываемого Хань Фэю (ок. 280–233 до н. э.), а не точный год записи этой главы.',
-    datingSource: { label: 'Атрибуция корпуса · Библиотека Конгресса', url: 'https://www.loc.gov/item/2021666503/' },
-    story: 'Герой находит в горах Чу необработанный камень. Два правителя доверяют оценке мастеров: это лишь камень. За мнимый обман Хэ лишают обеих стоп. При третьем правителе мастер обрабатывает находку и обнаруживает драгоценный материал. Имя человека становится именем сокровища.',
-    reading: 'После рассказа глава переходит к опасностям политического совета. Мы читаем здесь не просто награду за честность: даже ценное предложение может быть отвергнуто, а его автор — наказан.',
-    boundary: 'Это свидетельство о рассказе и его политическом смысле. Оно не устанавливает место находки или минералогический состав конкретного предмета.',
+    date: t('III век до н. э.*', '3rd century BCE*'),
+    author: t('«Хань Фэй-цзы»', 'Han Feizi'),
+    kind: t('Философская притча', 'Philosophical parable'),
+    reference: t('Глава 13 · «Хэ Ши»', 'Chapter 13 · He Shi'),
+    title: t('Ценность, которую не распознали', 'Value that went unrecognised'),
+    storyTime: t('Древнее Чу: правления Ли, У и Вэня', 'Ancient Chu: the reigns of Li, Wu and Wen'),
+    textTime: t('Поздняя эпоха Сражающихся царств', 'Late Warring States period'),
+    datingNote: t('*Традиционная датировка корпуса, приписываемого Хань Фэю (ок. 280–233 до н. э.), а не точный год записи этой главы.', '*The traditional dating of the corpus attributed to Han Fei (c. 280–233 BCE), not a precise date for this chapter.'),
+    datingSource: { label: t('Атрибуция корпуса · Библиотека Конгресса', 'Attribution of the corpus · Library of Congress'), url: 'https://www.loc.gov/item/2021666503/' },
+    story: t('Герой находит в горах Чу необработанный камень. Два правителя доверяют оценке мастеров: это лишь камень. За мнимый обман Хэ лишают обеих стоп. При третьем правителе мастер обрабатывает находку и обнаруживает драгоценный материал. Имя человека становится именем сокровища.', 'The protagonist finds a rough stone in the mountains of Chu. Two rulers trust their craftsmen’s verdict: it is merely a stone. Accused of deception, He loses both feet. Under a third ruler, a craftsman works the find and reveals precious material. The man’s name becomes the name of the treasure.'),
+    reading: t('После рассказа глава переходит к опасностям политического совета. Мы читаем здесь не просто награду за честность: даже ценное предложение может быть отвергнуто, а его автор — наказан.', 'The chapter then turns to the dangers of political advice. We read more than a reward for honesty here: even a valuable proposal may be rejected, and its author punished.'),
+    boundary: t('Это свидетельство о рассказе и его политическом смысле. Оно не устанавливает место находки или минералогический состав конкретного предмета.', 'This is evidence for a story and its political meaning. It does not establish the findspot or mineral composition of a particular object.'),
     sources: [
-      { label: '«Хань Фэй-цзы», 13 · китайский текст', url: 'https://ctext.org/hanfeizi/he-shi/zh' },
-      { label: 'Сверка сюжета · словарь Министерства образования Тайваня', url: 'https://dict.revised.moe.edu.tw/dictView.jsp?ID=79298&q=1&word=%E5%92%8C' },
+      { label: t('«Хань Фэй-цзы», 13 · китайский текст', 'Han Feizi, 13 · Chinese text'), url: 'https://ctext.org/hanfeizi/he-shi/zh' },
+      { label: t('Сверка сюжета · словарь Министерства образования Тайваня', 'Story cross-check · Taiwan Ministry of Education dictionary'), url: 'https://dict.revised.moe.edu.tw/dictView.jsp?ID=79298&q=1&word=%E5%92%8C' },
     ],
   },
   {
     id: 'shiji',
-    date: 'Рубеж II–I веков до н. э.',
-    author: '«Ши цзи»',
-    kind: 'Историческое повествование',
-    reference: 'Глава 81 · Лянь По и Линь Сянжу',
-    title: 'Сокровище между двумя царствами',
-    storyTime: 'Эпоха Сражающихся царств: Чжао и Цинь',
-    textTime: 'Рубеж II–I веков до н. э.',
-    datingNote: 'Время создания «Ши цзи» Сыма Цяня — около 100 года до н. э. Описанное посольство относится к более раннему времени.',
-    datingSource: { label: 'Датировка труда · Oxford History of Historical Writing', url: 'https://academic.oup.com/book/9284/chapter-abstract/156027551' },
-    story: 'Царь Цинь предлагает Чжао пятнадцать городов за драгоценный диск Хэ Ши. Посол Линь Сянжу замечает, что обещанию нельзя доверять. Он возвращает камень себе под предлогом показать изъян, добивается отсрочки и тайно отправляет его обратно в Чжао.',
-    reading: 'Теперь драгоценность уже признана всеми. В нашем сопоставлении вопрос меняется: не как увидеть ценность, а как сохранить её перед лицом превосходящей силы. На первый план выходит посол.',
-    boundary: 'Это другой эпизод о драгоценности с тем же именем, а не повтор находки Бянь Хэ. Совпадение имени не даёт непрерывной, проверенной истории самого камня.',
+    date: t('Рубеж II–I веков до н. э.', 'Late 2nd–early 1st century BCE'),
+    author: t('«Ши цзи»', 'Shiji'),
+    kind: t('Историческое повествование', 'Historical narrative'),
+    reference: t('Глава 81 · Лянь По и Линь Сянжу', 'Chapter 81 · Lian Po and Lin Xiangru'),
+    title: t('Сокровище между двумя царствами', 'A treasure between two states'),
+    storyTime: t('Эпоха Сражающихся царств: Чжао и Цинь', 'Warring States period: Zhao and Qin'),
+    textTime: t('Рубеж II–I веков до н. э.', 'Late 2nd–early 1st century BCE'),
+    datingNote: t('Время создания «Ши цзи» Сыма Цяня — около 100 года до н. э. Описанное посольство относится к более раннему времени.', 'Sima Qian’s Shiji was composed around 100 BCE. The diplomatic mission described took place earlier.'),
+    datingSource: { label: t('Датировка труда · Oxford History of Historical Writing', 'Dating of the work · Oxford History of Historical Writing'), url: 'https://academic.oup.com/book/9284/chapter-abstract/156027551' },
+    story: t('Царь Цинь предлагает Чжао пятнадцать городов за драгоценный диск Хэ Ши. Посол Линь Сянжу замечает, что обещанию нельзя доверять. Он возвращает камень себе под предлогом показать изъян, добивается отсрочки и тайно отправляет его обратно в Чжао.', 'The king of Qin offers Zhao fifteen cities for the precious He Shi disk. The envoy Lin Xiangru sees that the promise cannot be trusted. Pretending to point out a flaw, he takes back the stone, wins a delay, and secretly sends it home to Zhao.'),
+    reading: t('Теперь драгоценность уже признана всеми. В нашем сопоставлении вопрос меняется: не как увидеть ценность, а как сохранить её перед лицом превосходящей силы. На первый план выходит посол.', 'The treasure’s value is now recognised by everyone. In our comparison, the question shifts: not how to recognise value, but how to preserve it against a stronger power. The envoy takes centre stage.'),
+    boundary: t('Это другой эпизод о драгоценности с тем же именем, а не повтор находки Бянь Хэ. Совпадение имени не даёт непрерывной, проверенной истории самого камня.', 'This is another episode about a treasure with the same name, not a retelling of Bian He’s discovery. A shared name does not provide a continuous, verified history of the stone itself.'),
     sources: [
-      { label: '«Ши цзи», 81 · китайский текст', url: 'https://ctext.org/shiji/lian-po-lin-xiang-ru-lie-zhuan/zhs' },
-      { label: 'Сюжет «Вернуть диск в Чжао» · Министерство образования Тайваня', url: 'https://dict.idioms.moe.edu.tw/idiomView.jsp?ID=-341&la=0&webMd=1' },
+      { label: t('«Ши цзи», 81 · китайский текст', 'Shiji, 81 · Chinese text'), url: 'https://ctext.org/shiji/lian-po-lin-xiang-ru-lie-zhuan/zhs' },
+      { label: t('Сюжет «Вернуть диск в Чжао» · Министерство образования Тайваня', 'Returning the disk to Zhao · Taiwan Ministry of Education'), url: 'https://dict.idioms.moe.edu.tw/idiomView.jsp?ID=-341&la=0&webMd=1' },
     ],
   },
   {
     id: 'retelling',
-    date: '2 марта 2015',
+    date: t('2 марта 2015', '2 March 2015'),
     author: 'China Culture',
-    kind: 'Современный пересказ',
+    kind: t('Современный пересказ', 'Modern retelling'),
     reference: 'Nine tales about Chinese jade · He Shi Bi',
-    title: 'История становится уроком честности',
-    storyTime: 'Снова древнее Чу, не 2015 год',
-    textTime: '2 марта 2015 года',
-    datingNote: 'Дата публикации этой версии на культурном портале. Она не датирует происхождение легенды.',
-    datingSource: { label: 'Дата и текст · China Culture', url: 'https://en.chinaculture.org/2015-03/02/content_603183_4.htm' },
-    story: 'Культурный портал возвращается к Бянь Хэ: дважды отвергнутый камень наконец раскрывает свою ценность. В финале имя драгоценности объясняется честностью героя. Рядом даётся краткое пояснение формы диска bi.',
-    reading: 'В сравнении с главой «Хань Фэй-цзы» здесь исчезает последующее рассуждение об опасности реформ. В центре короткого пересказа остаётся понятная современному читателю нравственная история.',
-    boundary: 'Современная публикация показывает, как легенду рассказывают сегодня. Она не является независимым подтверждением событий древнего Чу.',
+    title: t('История становится уроком честности', 'The story becomes a lesson in honesty'),
+    storyTime: t('Снова древнее Чу, не 2015 год', 'Ancient Chu again, not 2015'),
+    textTime: t('2 марта 2015 года', '2 March 2015'),
+    datingNote: t('Дата публикации этой версии на культурном портале. Она не датирует происхождение легенды.', 'The publication date of this version on the cultural portal. It does not date the origin of the legend.'),
+    datingSource: { label: t('Дата и текст · China Culture', 'Date and text · China Culture'), url: 'https://en.chinaculture.org/2015-03/02/content_603183_4.htm' },
+    story: t('Культурный портал возвращается к Бянь Хэ: дважды отвергнутый камень наконец раскрывает свою ценность. В финале имя драгоценности объясняется честностью героя. Рядом даётся краткое пояснение формы диска bi.', 'The cultural portal returns to Bian He: the twice-rejected stone finally reveals its value. The ending explains the treasure’s name through the protagonist’s integrity. A short explanation of the bi disk’s shape follows.'),
+    reading: t('В сравнении с главой «Хань Фэй-цзы» здесь исчезает последующее рассуждение об опасности реформ. В центре короткого пересказа остаётся понятная современному читателю нравственная история.', 'Compared with the Han Feizi chapter, the subsequent discussion of the dangers of reform has disappeared. A moral story, accessible to a modern reader, remains at the centre of this brief retelling.'),
+    boundary: t('Современная публикация показывает, как легенду рассказывают сегодня. Она не является независимым подтверждением событий древнего Чу.', 'This modern publication shows how the legend is retold today. It is not independent confirmation of events in ancient Chu.'),
     sources: [
-      { label: 'China Culture · пересказ 2015 года', url: 'https://en.chinaculture.org/2015-03/02/content_603183_4.htm' },
+      { label: t('China Culture · пересказ 2015 года', 'China Culture · 2015 retelling'), url: 'https://en.chinaculture.org/2015-03/02/content_603183_4.htm' },
     ],
   },
 ];
@@ -62,18 +65,18 @@ const witnesses = [
 <section id="legend-history" class="legend-section section page-shell section-rule" aria-labelledby="legend-history-title">
   <header class="dossier-heading">
     <div>
-      <p class="eyebrow">История легенды · досье 01</p>
-      <h2 id="legend-history-title" class="title">Имя одно.<br />Историй несколько.</h2>
+      <p class="eyebrow">{t('История легенды · досье 01', 'History of a legend · dossier 01')}</p>
+      <h2 id="legend-history-title" class="title">{t('Имя одно.', 'One name.')}<br />{t('Историй несколько.', 'Several stories.')}</h2>
     </div>
-    <p>Хэ Ши би — <span lang="zh">和氏璧</span>. Проследим, как меняется роль драгоценности в текстах. Перед нами история рассказов, не установленная биография камня.</p>
+    <p>{t('Хэ Ши би', 'He Shi Bi')} — <span lang="zh">和氏璧</span>. {t('Проследим, как меняется роль драгоценности в текстах. Перед нами история рассказов, не установленная биография камня.', 'Follow the changing role of a treasure across texts. This is a history of stories, not an established biography of a stone.')}</p>
   </header>
 
   <legend-history class="dossier">
     <div class="witness-guide">
-      <p>Три текстовых свидетельства</p>
-      <span>Слева направо — время текста, не событий</span>
+      <p>{t('Три текстовых свидетельства', 'Three textual witnesses')}</p>
+      <span>{t('Слева направо — время текста, не событий', 'Left to right: dates of texts, not events')}</span>
     </div>
-    <div class="witness-controls" data-witness-controls hidden aria-label="Текстовые свидетельства о Хэ Ши би">
+    <div class="witness-controls" data-witness-controls hidden aria-label={t('Текстовые свидетельства о Хэ Ши би', 'Textual witnesses to He Shi Bi')}>
       {witnesses.map((witness, index) => (
         <button
           type="button"
@@ -96,32 +99,32 @@ const witnesses = [
           aria-labelledby={`witness-${witness.id}-title`}
           data-witness-panel={witness.id}
         >
-          <aside class="witness-margin" aria-label="Сведения о тексте">
+          <aside class="witness-margin" aria-label={t('Сведения о тексте', 'About the text')}>
             <span class="folio" aria-hidden="true">0{index + 1}<small> / 03</small></span>
             <p class="witness-kind">{witness.kind}</p>
             <p class="witness-author">{witness.author}</p>
             <p class="witness-reference">{witness.reference}</p>
             <span class="name-mark" lang="zh" aria-hidden="true">和氏璧</span>
-            <p class="margin-note">Имя в литературе.<br />Не портрет предмета.</p>
+            <p class="margin-note">{t('Имя в литературе.', 'A name in literature.')}<br />{t('Не портрет предмета.', 'Not a portrait of an object.')}</p>
           </aside>
 
           <div class="witness-body">
             <div class="witness-clocks">
-              <div><span class="clock-label">Время внутри сюжета</span><p>{witness.storyTime}</p></div>
-              <div><span class="clock-label">Время текста</span><p>{witness.textTime}</p></div>
+              <div><span class="clock-label">{t('Время внутри сюжета', 'Time within the story')}</span><p>{witness.storyTime}</p></div>
+              <div><span class="clock-label">{t('Время текста', 'Date of the text')}</span><p>{witness.textTime}</p></div>
             </div>
             <h3 id={`witness-${witness.id}-title`}>{witness.title}</h3>
             <p class="witness-story">{witness.story}</p>
             <div class="witness-reading">
-              <h4>Что меняется · наше прочтение</h4>
+              <h4>{t('Что меняется · наше прочтение', 'What changes · our reading')}</h4>
               <p>{witness.reading}</p>
             </div>
             <div class="witness-boundary">
-              <h4>Предел свидетельства</h4>
+              <h4>{t('Предел свидетельства', 'Limits of the evidence')}</h4>
               <p>{witness.boundary}</p>
             </div>
             <footer class="witness-sources">
-              <p class="source-label">Источники пересказа</p>
+              <p class="source-label">{t('Источники пересказа', 'Sources for the retelling')}</p>
               <ul>{witness.sources.map((source) => <li><a href={source.url}>{source.label} <span aria-hidden="true">↗</span></a></li>)}</ul>
               <p class="dating-note">{witness.datingNote} <a href={witness.datingSource.url}>{witness.datingSource.label} <span aria-hidden="true">↗</span></a></p>
             </footer>
@@ -131,8 +134,8 @@ const witnesses = [
     </div>
 
     <footer class="dossier-colophon">
-      <span>Граница знания</span>
-      <p>Тексты позволяют сравнить сюжеты, но не отождествить Хэ Ши би с сохранившимся камнем. Его превращение в императорскую печать здесь не принимается за установленный факт. Все пересказы — редакторские, не цитаты.</p>
+      <span>{t('Граница знания', 'Limits of knowledge')}</span>
+      <p>{t('Тексты позволяют сравнить сюжеты, но не отождествить Хэ Ши би с сохранившимся камнем. Его превращение в императорскую печать здесь не принимается за установленный факт. Все пересказы — редакторские, не цитаты.', 'Texts let us compare stories, but not identify He Shi Bi with a surviving stone. Its transformation into an imperial seal is not treated here as established fact. All retellings are editorial paraphrases, not quotations.')}</p>
     </footer>
   </legend-history>
 </section>

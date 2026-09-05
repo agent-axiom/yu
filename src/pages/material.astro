@@ -4,33 +4,38 @@ import MaterialLens from '../components/MaterialLens.astro';
 import SourceRef from '../components/SourceRef.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import { withBase } from '../lib/urls';
+import { localeFromPath, translator } from '../lib/i18n';
+import { localizeCollection } from '../i18n/content';
 
-const [materials, sources] = await Promise.all([getCollection('materials'), getCollection('sources')]);
+const locale = localeFromPath(Astro.url.pathname);
+const t = translator(locale);
+const [materialRecords, sources] = await Promise.all([getCollection('materials'), getCollection('sources')]);
+const materials = localizeCollection('materials', materialRecords, locale);
 const sourceMap = new Map(sources.map((entry) => [entry.id, entry.data]));
 const gia = sourceMap.get('gia-jade-2026');
 const care = sourceMap.get('gia-care-2026');
 const feng = sourceMap.get('feng-nephrite-2017');
 ---
 
-<BaseLayout title="Нефрит и жадеит" description="Интерактивное минералогическое сравнение нефрита и жадеита: химия, структура, твёрдость, вязкость и диагностика.">
+<BaseLayout title={t('Нефрит и жадеит', 'Nephrite and jadeite')} description={t('Интерактивное минералогическое сравнение нефрита и жадеита: химия, структура, твёрдость, вязкость и диагностика.', 'An interactive mineralogical comparison of nephrite and jadeite: chemistry, structure, hardness, toughness and identification.')}>
   <header class="material-hero page-shell">
-    <div><p class="eyebrow">Материя · минералогия</p><h1 class="display">Jade — это не один камень</h1><p class="lede">Нефрит и жадеит объединены историческим именем и выдающейся прочностью. Но микроскопически один похож на спутанный войлок, другой — на плотно собранную мозаику.</p></div>
-    <div class="formula" aria-label="Химические формулы"><p><span>Нефрит</span>Ca₂(Mg,Fe)₅Si₈O₂₂(OH)₂</p><p><span>Жадеит</span>NaAlSi₂O₆</p></div>
+    <div><p class="eyebrow">{t('Материя · минералогия', 'Material · mineralogy')}</p><h1 class="display">{t('Jade — это не один камень', 'Jade is not a single stone')}</h1><p class="lede">{t('Нефрит и жадеит объединены историческим именем и выдающейся прочностью. Но микроскопически один похож на спутанный войлок, другой — на плотно собранную мозаику.', 'Nephrite and jadeite share a historical name and exceptional toughness. Under the microscope, however, one resembles tangled felt, the other a tightly fitted mosaic.')}</p></div>
+    <div class="formula" aria-label={t('Химические формулы', 'Chemical formulas')}><p><span>{t('Нефрит', 'Nephrite')}</span>Ca₂(Mg,Fe)₅Si₈O₂₂(OH)₂</p><p><span>{t('Жадеит', 'Jadeite')}</span>NaAlSi₂O₆</p></div>
   </header>
 
   <section id="material-lens" class="section page-shell section-rule" aria-labelledby="lens-title">
-    <div class="lens-head"><div><p class="eyebrow">Интерактивная линза</p><h2 id="lens-title" class="title">Структура решает</h2></div><p>Цвет может обмануть. Устойчивость к сколу рождается не просто из твёрдости, а из того, как кристаллы сцеплены друг с другом.{gia && <SourceRef source={gia} />}</p></div>
+    <div class="lens-head"><div><p class="eyebrow">{t('Интерактивная линза', 'Interactive lens')}</p><h2 id="lens-title" class="title">{t('Структура решает', 'Structure matters')}</h2></div><p>{t('Цвет может обмануть. Устойчивость к сколу рождается не просто из твёрдости, а из того, как кристаллы сцеплены друг с другом.', 'Colour can mislead. Resistance to chipping depends not simply on hardness, but on the way crystals interlock.')}{gia && <SourceRef source={gia} />}</p></div>
     <MaterialLens materials={materials} />
-    <div class="material-properties" aria-label="Твёрдость и вязкость — разные свойства">
-      <div><p class="eyebrow">Царапина</p><h3>Твёрдость</h3><p>Сопротивление царапанию. Шкала Мооса сравнивает, какой минерал может поцарапать другой; её ступени не равны по величине.</p></div>
-      <div><p class="eyebrow">Скол</p><h3>Вязкость</h3><p>Сопротивление разрушению и сколам. Оба материала очень вязкие благодаря сцеплению кристаллов. Более высокая твёрдость не означает большую стойкость к удару.{care && <SourceRef source={care} />}</p></div>
+    <div class="material-properties" aria-label={t('Твёрдость и вязкость — разные свойства', 'Hardness and toughness are different properties')}>
+      <div><p class="eyebrow">{t('Царапина', 'Scratching')}</p><h3>{t('Твёрдость', 'Hardness')}</h3><p>{t('Сопротивление царапанию. Шкала Мооса сравнивает, какой минерал может поцарапать другой; её ступени не равны по величине.', 'Resistance to scratching. The Mohs scale compares which mineral can scratch another; its steps are not equal in size.')}</p></div>
+      <div><p class="eyebrow">{t('Скол', 'Chipping')}</p><h3>{t('Вязкость', 'Toughness')}</h3><p>{t('Сопротивление разрушению и сколам. Оба материала очень вязкие благодаря сцеплению кристаллов. Более высокая твёрдость не означает большую стойкость к удару.', 'Resistance to breaking and chipping. Both materials are very tough because their crystals interlock. Greater hardness does not mean greater resistance to impact.')}{care && <SourceRef source={care} />}</p></div>
     </div>
   </section>
 
   <section class="section diagnosis" aria-labelledby="diagnosis-title">
     <div class="page-shell diagnosis__grid">
-      <img src={withBase('/images/jade-macro.webp')} alt="Генеративная макроиллюстрация зелёной волокнистой минеральной поверхности" width="1536" height="1024" loading="lazy" />
-      <div><p class="eyebrow">Подлинность</p><h2 id="diagnosis-title" class="title">Глаз видит цвет. Лаборатория — структуру.</h2><p class="lede">Имитации, окрашивание и разные зелёные минералы делают фотографическую диагностику ненадёжной. Геммологи используют совокупность наблюдений и инструментальных методов — от оптики до спектроскопии.</p><ul><li>показатель преломления и плотность;</li><li>микроскопия структуры и включений;</li><li>спектры Raman, FTIR и другие методы по задаче.{feng && <SourceRef source={feng} />}</li></ul><p class="warning">Не покупайте дорогой объект только по цвету или словам продавца: независимый лабораторный отчёт важнее «домашнего теста».</p></div>
+      <img src={withBase('/images/jade-macro.webp')} alt={t('Генеративная макроиллюстрация зелёной волокнистой минеральной поверхности', 'AI-generated macro illustration of a green fibrous mineral surface')} width="1536" height="1024" loading="lazy" />
+      <div><p class="eyebrow">{t('Подлинность', 'Authenticity')}</p><h2 id="diagnosis-title" class="title">{t('Глаз видит цвет. Лаборатория — структуру.', 'The eye sees colour. The lab sees structure.')}</h2><p class="lede">{t('Имитации, окрашивание и разные зелёные минералы делают фотографическую диагностику ненадёжной. Геммологи используют совокупность наблюдений и инструментальных методов — от оптики до спектроскопии.', 'Imitations, dyes and different green minerals make identification from photographs unreliable. Gemmologists combine observations and instrumental methods, from optics to spectroscopy.')}</p><ul><li>{t('показатель преломления и плотность;', 'refractive index and density;')}</li><li>{t('микроскопия структуры и включений;', 'microscopic examination of structure and inclusions;')}</li><li>{t('спектры Raman, FTIR и другие методы по задаче.', 'Raman and FTIR spectra, and other methods as appropriate.')}{feng && <SourceRef source={feng} />}</li></ul><p class="warning">{t('Не покупайте дорогой объект только по цвету или словам продавца: независимый лабораторный отчёт важнее «домашнего теста».', 'Do not buy an expensive object based only on colour or a seller’s claims: an independent laboratory report matters more than a ‘home test’.')}</p></div>
     </div>
   </section>
 </BaseLayout>

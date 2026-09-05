@@ -2,6 +2,9 @@
 import type { CollectionEntry } from 'astro:content';
 import SourceRef from './SourceRef.astro';
 import { eraPanelId } from '../lib/timeline';
+import { localeFromPath, translator } from '../lib/i18n';
+const locale = localeFromPath(Astro.url.pathname);
+const t = translator(locale);
 
 interface Props {
   eras: CollectionEntry<'eras'>[];
@@ -13,7 +16,7 @@ const sourceMap = new Map(sources.map((entry) => [entry.id, entry.data]));
 ---
 
 <history-timeline class="timeline">
-  <div class="timeline__rail" role="tablist" aria-label="Исторические эпохи">
+  <div class="timeline__rail" role="tablist" aria-label={t('Исторические эпохи', 'Historical eras')}>
     <ol>
       {eras.map((era, index) => (
         <li>
@@ -49,7 +52,7 @@ const sourceMap = new Map(sources.map((entry) => [entry.id, entry.data]));
           <h2>{era.data.title}</h2>
           <p class="timeline__summary">{era.data.summary}</p>
           <p>{era.data.detail}</p>
-          <div class="timeline__sources" aria-label="Источники раздела">
+          <div class="timeline__sources" aria-label={t('Источники раздела', 'Sources for this era')}>
             {era.data.citations.map((id, sourceIndex) => {
               const source = sourceMap.get(id);
               return source && <SourceRef source={source} marker={sourceIndex + 1} />;
@@ -59,7 +62,7 @@ const sourceMap = new Map(sources.map((entry) => [entry.id, entry.data]));
       </article>
     ))}
   </div>
-  <p class="timeline__hint">Используйте ← →, Home и End для перемещения по шкале</p>
+  <p class="timeline__hint">{t('Используйте ← →, Home и End для перемещения по шкале', 'Use ← →, Home and End to move along the timeline')}</p>
 </history-timeline>
 
 <script>

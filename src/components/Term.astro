@@ -1,0 +1,17 @@
+---
+import { glossaryEntries } from '../i18n/glossary';
+import { localeFromPath, localizePath, type Locale } from '../lib/i18n';
+
+interface Props { id: string; locale?: Locale; }
+const { id, locale = localeFromPath(Astro.url.pathname) } = Astro.props;
+const entry = glossaryEntries.find((term) => term.id === id);
+const href = `${localizePath('/glossary/', locale)}#${encodeURIComponent(id)}`;
+---
+
+<a class="term-link" href={href} data-term={id}><slot>{entry?.title[locale] ?? id}</slot></a>
+
+<style>
+  .term-link { color: inherit; text-decoration-line: underline; text-decoration-style: dotted; text-decoration-thickness: 1px; text-underline-offset: .22em; }
+  .term-link:hover { text-decoration-style: solid; }
+  .term-link:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; border-radius: 1px; }
+</style>

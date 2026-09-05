@@ -3,35 +3,41 @@ import { getCollection } from 'astro:content';
 import MythExplorer from '../components/MythExplorer.astro';
 import LegendHistory from '../components/LegendHistory.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
+import Term from '../components/Term.astro';
 import { withBase } from '../lib/urls';
+import { localeFromPath, translator } from '../lib/i18n';
+import { localizeCollection } from '../i18n/content';
 
-const [myths, sources] = await Promise.all([getCollection('myths'), getCollection('sources')]);
+const locale = localeFromPath(Astro.url.pathname);
+const t = translator(locale);
+const [mythRecords, sources] = await Promise.all([getCollection('myths'), getCollection('sources')]);
+const myths = localizeCollection('myths', mythRecords, locale);
 const orderedMyths = myths.sort((a, b) => a.id.localeCompare(b.id));
 ---
 
-<BaseLayout title="Мифология нефрита" description="Легенды и культурные представления о нефрите в Китае, у майя и маори — с отделением мифа от подтверждённых данных.">
+<BaseLayout title={t('Мифология нефрита', 'The mythology of jade')} description={t('Легенды и культурные представления о нефрите в Китае, у майя и маори — с отделением мифа от подтверждённых данных.', 'Legends and cultural understandings of jade in China and among the Maya and Māori — with myth distinguished from evidence.')}>
   <header class="myth-hero">
-    <img src={withBase('/images/mythic-jade.webp')} alt="Поэтическая иллюстрация круглого нефритового образа над водой и туманным ландшафтом" width="1672" height="941" />
+    <img src={withBase('/images/mythic-jade.webp')} alt={t('Поэтическая иллюстрация круглого нефритового образа над водой и туманным ландшафтом', 'Poetic illustration of a circular jade form above water and a misty landscape')} width="1672" height="941" />
     <div aria-hidden="true"></div>
-    <div class="page-shell"><p class="eyebrow">Мифология · три слоя</p><h1 class="display">Камень, который научился говорить</h1><p class="lede">Миф не ошибка в справочнике. Это язык, которым сообщества связывают материал с честностью, предками, ландшафтом, дыханием и смертью.</p></div>
+    <div class="page-shell"><p class="eyebrow">{t('Мифология · три слоя', 'Mythology · three layers')}</p><h1 class="display">{t('Камень, который научился говорить', 'The stone that learned to speak')}</h1><p class="lede">{t('Миф не ошибка в справочнике. Это язык, которым сообщества связывают материал с честностью, предками, ландшафтом, дыханием и смертью.', 'A myth is not a mistake in a reference book. It is a language through which communities connect material with honesty, ancestors, landscape, breath and death.')}</p></div>
   </header>
 
   <section class="section page-shell layer-key" aria-labelledby="key-title">
-    <div><p class="eyebrow">Как читать</p><h2 id="key-title" class="title">Не разрушать историю. Не выдавать её за факт.</h2></div>
+    <div><p class="eyebrow">{t('Как читать', 'How to read')}</p><h2 id="key-title" class="title">{t('Не разрушать историю. Не выдавать её за факт.', 'Respect the story. Do not mistake it for fact.')}</h2></div>
     <ol>
-      <li><span>01</span><div><strong>Легенда</strong><p>Сюжет в аккуратном пересказе.</p></div></li>
-      <li><span>02</span><div><strong>Культурный контекст</strong><p>Почему он был понятен и важен.</p></div></li>
-      <li><span>03</span><div><strong>Что подтверждено</strong><p>Предметы, тексты и границы знания.</p></div></li>
+      <li><span>01</span><div><strong>{t('Легенда', 'Legend')}</strong><p>{t('Сюжет в аккуратном пересказе.', 'The story, carefully retold.')}</p></div></li>
+      <li><span>02</span><div><strong>{t('Культурный контекст', 'Cultural context')}</strong><p>{t('Почему он был понятен и важен.', 'Why it made sense and why it mattered.')}</p></div></li>
+      <li><span>03</span><div><strong>{t('Что подтверждено', 'What is supported')}</strong><p>{t('Предметы, тексты и границы знания.', 'Objects, texts and the limits of knowledge.')}</p></div></li>
     </ol>
   </section>
 
   <LegendHistory />
 
-  <section class="section page-shell section-rule" aria-label="Мифологические сюжеты">
+  <section class="section page-shell section-rule" aria-label={t('Мифологические сюжеты', 'Mythological narratives')}>
     <MythExplorer myths={orderedMyths} sources={sources} />
   </section>
 
-  <aside class="comparison-note page-shell reveal"><p class="eyebrow">Важно</p><p>Похожие мотивы — вечность, чистота, жизнь — не доказывают общего происхождения мифов. Китайский yù, мезоамериканский жадеит и маорийский pounamu принадлежат разным языкам, территориям и историческим отношениям.</p></aside>
+  <aside class="comparison-note page-shell reveal"><p class="eyebrow">{t('Важно', 'An important distinction')}</p><p>{t('Похожие мотивы — вечность, чистота, жизнь — не доказывают общего происхождения мифов. Китайский', 'Similar motifs — eternity, purity, life — do not prove a common origin for myths. Chinese')} <Term id="yu">yù</Term>, {t('мезоамериканский', 'Mesoamerican')} <Term id="jadeite">{t('жадеит', 'jadeite')}</Term> {t('и маорийский', 'and Māori')} <Term id="pounamu">pounamu</Term> {t('принадлежат разным языкам, территориям и историческим отношениям.', 'belong to different languages, territories and historical relationships.')}</p></aside>
 </BaseLayout>
 
 <style>

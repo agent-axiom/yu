@@ -11,8 +11,14 @@ const evidenceLabels: Record<EvidenceLevel, string> = {
   none: 'Доказательств нет',
 };
 
-export function evidenceLabel(level: EvidenceLevel): string {
-  return evidenceLabels[level];
+export function evidenceLabel(level: EvidenceLevel, locale: 'ru' | 'en' = 'ru'): string {
+  const english: Record<EvidenceLevel, string> = {
+    traditional: 'Traditional belief',
+    laboratory: 'Laboratory observation',
+    clinical: 'Clinical evidence',
+    none: 'No supporting evidence',
+  };
+  return locale === 'en' ? english[level] : evidenceLabels[level];
 }
 
 export function missingSourceIds(

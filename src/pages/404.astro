@@ -1,25 +1,28 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
-import { withBase } from '../lib/urls';
+import { localeFromPath, localizePath, translator } from '../lib/i18n';
 
+const locale = localeFromPath(Astro.url.pathname);
+const t = translator(locale);
+const href = (path: string) => localizePath(path, locale);
 const routes = [
-  { href: '/history/', label: 'История' },
-  { href: '/mythology/', label: 'Мифология' },
-  { href: '/material/', label: 'Материал' },
-  { href: '/medicine/', label: 'Медицина' },
+  { href: '/history/', label: t('История', 'History') },
+  { href: '/mythology/', label: t('Мифология', 'Mythology') },
+  { href: '/material/', label: t('Материал', 'Material') },
+  { href: '/medicine/', label: t('Медицина', 'Medicine') },
 ];
 ---
 
-<BaseLayout title="Страница не найдена" description="Запрошенная страница проекта YU не найдена.">
+<BaseLayout title={t('Страница не найдена', 'Page not found')} description={t('Запрошенная страница проекта YU не найдена.', 'The requested YU page could not be found.')}>
   <section class="not-found page-shell">
     <div class="not-found__mark" aria-hidden="true">玉</div>
     <div>
-      <p class="eyebrow">Ошибка 404</p>
-      <h1 class="display">Этот след обрывается</h1>
-      <p class="lede">Камень остался, а адрес изменился или никогда не существовал. Вернитесь к началу либо выберите новый маршрут.</p>
-      <a class="button" href={withBase('/')}>На главную</a>
+      <p class="eyebrow">{t('Ошибка 404', 'Error 404')}</p>
+      <h1 class="display">{t('Этот след обрывается', 'This trail ends here')}</h1>
+      <p class="lede">{t('Камень остался, а адрес изменился или никогда не существовал. Вернитесь к началу либо выберите новый маршрут.', 'The stone remains, but this address has changed or never existed. Return to the beginning or choose another route.')}</p>
+      <a class="button" href={href('/')}>{t('На главную', 'Back to home')}</a>
     </div>
-    <nav aria-label="Основные разделы"><p>Продолжить исследование</p>{routes.map((route) => <a href={withBase(route.href)}>{route.label}<span aria-hidden="true">↗</span></a>)}</nav>
+    <nav aria-label={t('Основные разделы', 'Main sections')}><p>{t('Продолжить исследование', 'Keep exploring')}</p>{routes.map((route) => <a href={href(route.href)}>{route.label}<span aria-hidden="true">↗</span></a>)}</nav>
   </section>
 </BaseLayout>
 

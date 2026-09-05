@@ -2,6 +2,9 @@
 import type { CollectionEntry } from 'astro:content';
 import { mythLayerLabel, type MythLayer } from '../lib/explorers';
 import SourceRef from './SourceRef.astro';
+import { localeFromPath, translator } from '../lib/i18n';
+const locale = localeFromPath(Astro.url.pathname);
+const t = translator(locale);
 
 interface Props {
   myths: CollectionEntry<'myths'>[];
@@ -20,7 +23,7 @@ const layers: MythLayer[] = ['legend', 'context', 'confirmed'];
         <p><span>0{mythIndex + 1}</span> {myth.data.culture}</p>
         <h2>{myth.data.title}</h2>
       </header>
-      <div class="myth__tabs" role="tablist" aria-label={`Слои сюжета: ${myth.data.title}`}>
+      <div class="myth__tabs" role="tablist" aria-label={`${t('Слои сюжета', 'Layers of the story')}: ${myth.data.title}`}>
         {layers.map((layer, index) => (
           <button
             type="button"
@@ -30,7 +33,7 @@ const layers: MythLayer[] = ['legend', 'context', 'confirmed'];
             aria-selected={index === 0 ? 'true' : 'false'}
             tabindex={index === 0 ? 0 : -1}
             data-layer-tab={layer}
-          >{mythLayerLabel(layer)}</button>
+          >{mythLayerLabel(layer, locale)}</button>
         ))}
       </div>
       <div class="myth__layers">
@@ -41,13 +44,13 @@ const layers: MythLayer[] = ['legend', 'context', 'confirmed'];
             aria-labelledby={`${myth.id}-${layer}-tab`}
             data-layer-panel={layer}
           >
-            <h3>{mythLayerLabel(layer)}</h3>
+            <h3>{mythLayerLabel(layer, locale)}</h3>
             <p>{myth.data[layer]}</p>
           </section>
         ))}
       </div>
       <footer>
-        <span>Проверить источники</span>
+        <span>{t('Проверить источники', 'Check the sources')}</span>
         {myth.data.citations.map((id, index) => {
           const source = sourceMap.get(id);
           return source && <SourceRef source={source} marker={index + 1} />;

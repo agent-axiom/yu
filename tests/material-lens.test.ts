@@ -48,6 +48,19 @@ describe('material lens', () => {
     expect(input.step).toBe('1');
   });
 
+  it('keeps English readouts and accessible values localized through interaction', () => {
+    const { root, input, output } = fixture('35');
+    root.dataset.locale = 'en';
+    bindMaterialLens(root);
+    expect(input.getAttribute('aria-valuetext')).toBe('Diagram area: nephrite 35%, jadeite 65%');
+    expect(output.textContent).toBe('Nephrite 35% · Jadeite 65%');
+    input.value = '100';
+    input.dispatchEvent(new Event('input'));
+    expect(root.style.getPropertyValue('--lens')).toBe('100%');
+    expect(input.getAttribute('aria-valuetext')).toBe('Diagram area: nephrite 100%, jadeite 0%');
+    expect(output.textContent).toBe('Nephrite 100% · Jadeite 0%');
+  });
+
   it.each([['0', '100'], ['100', '0']])('supports the %s%% endpoint', (value, other) => {
     const { root, input } = fixture();
     bindMaterialLens(root);

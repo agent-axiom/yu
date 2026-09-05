@@ -1,4 +1,6 @@
 ---
+import { localeFromPath, translator } from '../lib/i18n';
+const t = translator(localeFromPath(Astro.url.pathname));
 interface SourceData {
   title: string;
   authors: string[];
@@ -18,15 +20,15 @@ const { source, marker = '↗' } = Astro.props;
 ---
 
 <details class="source-ref">
-  <summary aria-label={`Источник: ${source.title}`}>
+  <summary aria-label={`${t('Источник', 'Source')}: ${source.title}`}>
     <span aria-hidden="true">{marker}</span>
-    <span>Источник</span>
+    <span>{t('Источник', 'Source')}</span>
   </summary>
   <div class="source-ref__card">
     <p class="source-ref__kind">{source.kind}</p>
     <p><strong>{source.title}</strong></p>
     <p>{source.authors.join(', ')}</p>
-    <p>{source.publisher}{source.locator && ` · ${source.locator}`} · {source.publicationYear ?? 'год публикации не указан'}</p>
-    <a href={source.url} target="_blank" rel="noreferrer">Открыть публикацию <span aria-hidden="true">↗</span></a>
+    <p>{source.publisher}{source.locator && ` · ${source.locator}`} · {source.publicationYear ?? t('год публикации не указан', 'publication year not stated')}</p>
+    <a href={source.url} target="_blank" rel="noreferrer">{t('Открыть публикацию', 'Read the source')} <span aria-hidden="true">↗</span></a>
   </div>
 </details>
