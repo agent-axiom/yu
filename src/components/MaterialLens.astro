@@ -1,6 +1,5 @@
 ---
 import type { CollectionEntry } from 'astro:content';
-import { withBase } from '../lib/urls';
 
 interface Props { materials: CollectionEntry<'materials'>[]; }
 const { materials } = Astro.props;
@@ -16,17 +15,83 @@ const rows = [
 ---
 
 <material-lens class="lens" style="--lens:50%">
-  <div class="lens__visual" aria-hidden="true">
-    <img src={withBase('/images/jade-macro.webp')} alt="" width="1536" height="1024" loading="lazy" />
-    <div class="lens__jadeite"><img src={withBase('/images/jade-macro.webp')} alt="" width="1536" height="1024" loading="lazy" /></div>
-    <div class="lens__divider"></div>
-    <span class="lens__label lens__label--left">Нефрит · волокна</span>
-    <span class="lens__label lens__label--right">Жадеит · зёрна</span>
-  </div>
-  <div class="lens__control">
-    <label for="material-lens-control">Передвиньте минералогическую линзу</label>
-    <input id="material-lens-control" type="range" min="0" max="100" value="50" aria-valuetext="Поровну: нефрит и жадеит" />
-    <p>Визуализация объясняет принцип структуры, но не служит диагностикой камня.</p>
+  <figure class="lens__figure">
+    <figcaption>
+      <p class="lens__notice">Объяснительные схемы · не микрофотографии, не диагностика</p>
+      <div class="lens__key">
+        <div><span>01 · Нефрит</span><h3>Волокна</h3><p>Тонкие кристаллы образуют плотное переплетение, подобное войлоку.</p></div>
+        <div><span>02 · Жадеит</span><h3>Зёрна</h3><p>Кристаллы обычно складываются в плотную зернистую мозаику.</p></div>
+      </div>
+    </figcaption>
+    <div class="lens__visual">
+      <svg class="lens__diagram lens__nephrite" data-structure="fibres" viewBox="0 0 960 480" preserveAspectRatio="xMidYMid slice" role="img" aria-labelledby="nephrite-scheme-title nephrite-scheme-desc">
+        <title id="nephrite-scheme-title">Схема структуры нефрита</title>
+        <desc id="nephrite-scheme-desc">Пучки тонких вытянутых волокон переплетаются в разных направлениях. Условный рисунок без масштаба.</desc>
+        <defs>
+          <g id="nephrite-fibre-bundle" fill="none" stroke-linecap="round">
+            <path d="M-20 11 C65 -24 122 69 220 7" stroke="#bdc7a4" stroke-width="3" />
+            <path d="M-22 18 C70 -16 122 75 224 14" stroke="#849d7f" stroke-width="2" />
+            <path d="M-23 25 C69 -10 123 82 229 21" stroke="#d6d6b6" stroke-width="2" />
+            <path d="M-24 32 C76 -3 124 90 234 28" stroke="#769775" stroke-width="3" />
+            <path d="M-23 40 C73 5 124 97 237 36" stroke="#adba96" stroke-width="2" />
+            <path d="M-20 47 C77 14 127 104 239 43" stroke="#d6d6b6" stroke-width="1.5" />
+            <path d="M-18 54 C83 21 130 111 237 51" stroke="#849d7f" stroke-width="3" />
+          </g>
+          <pattern id="nephrite-fibre-field" width="400" height="280" patternUnits="userSpaceOnUse">
+            <rect width="400" height="280" fill="#18362c" />
+            <g opacity=".48">
+              <use href="#nephrite-fibre-bundle" transform="translate(10 38) rotate(-34)" />
+              <use href="#nephrite-fibre-bundle" transform="translate(208 202) rotate(-40)" />
+              <use href="#nephrite-fibre-bundle" transform="translate(48 215) rotate(17)" />
+            </g>
+            <use href="#nephrite-fibre-bundle" transform="translate(-26 45) rotate(28)" />
+            <use href="#nephrite-fibre-bundle" transform="translate(217 -47) rotate(67)" />
+            <use href="#nephrite-fibre-bundle" transform="translate(93 146) rotate(-44)" />
+            <use href="#nephrite-fibre-bundle" transform="translate(313 145) rotate(73)" />
+            <use href="#nephrite-fibre-bundle" transform="translate(48 253) rotate(-18)" />
+          </pattern>
+        </defs>
+        <rect width="960" height="480" fill="url(#nephrite-fibre-field)" />
+      </svg>
+      <svg class="lens__diagram lens__jadeite" data-structure="grains" viewBox="0 0 960 480" preserveAspectRatio="xMidYMid slice" role="img" aria-labelledby="jadeite-scheme-title jadeite-scheme-desc">
+        <title id="jadeite-scheme-title">Схема структуры жадеита</title>
+        <desc id="jadeite-scheme-desc">Разнонаправленные угловатые зёрна плотно примыкают друг к другу. Условный рисунок без масштаба.</desc>
+        <defs>
+          <pattern id="jadeite-grain-field" width="360" height="280" patternUnits="userSpaceOnUse">
+            <rect width="360" height="280" fill="#2e5946" />
+            <g stroke="#c8d6b6" stroke-width="1.5" stroke-linejoin="round">
+              <path d="M0 0 H72 L95 45 58 96 0 73Z" fill="#456f54" />
+              <path d="M72 0 H179 L157 68 95 45Z" fill="#7d9970" />
+              <path d="M179 0 H283 L265 47 205 83 157 68Z" fill="#456953" />
+              <path d="M283 0 H360 V73 L304 103 265 47Z" fill="#64835d" />
+              <path d="M0 73 L58 96 77 153 31 181 0 152Z" fill="#6e926b" />
+              <path d="M58 96 L95 45 157 68 151 133 111 169 77 153Z" fill="#315b47" />
+              <path d="M157 68 L205 83 244 136 194 163 151 133Z" fill="#8fa97b" />
+              <path d="M205 83 L265 47 304 103 285 158 244 136Z" fill="#4f7856" />
+              <path d="M304 103 L360 73 V152 L330 190 285 158Z" fill="#315b47" />
+              <path d="M0 152 L31 181 61 223 39 280 H0Z" fill="#315b47" />
+              <path d="M31 181 L77 153 111 169 130 218 99 251 61 223Z" fill="#87a177" />
+              <path d="M111 169 L151 133 194 163 215 218 164 244 130 218Z" fill="#4f7856" />
+              <path d="M194 163 L244 136 285 158 276 216 215 218Z" fill="#6e926b" />
+              <path d="M285 158 L330 190 360 152 V280 H325 L305 245 276 216Z" fill="#7d9970" />
+              <path d="M39 280 L61 223 99 251 130 218 164 244 180 280Z" fill="#456953" />
+              <path d="M180 280 L164 244 215 218 276 216 305 245 325 280Z" fill="#315b47" />
+            </g>
+            <g fill="none" stroke="#d6dfc4" stroke-width=".8" opacity=".32">
+              <path d="M13 18 L52 79 M106 12 L99 34 M164 81 L164 122 M219 97 L236 125 M314 112 L340 99 M126 175 L155 230 M230 238 L283 258" />
+            </g>
+          </pattern>
+        </defs>
+        <rect width="960" height="480" fill="url(#jadeite-grain-field)" />
+      </svg>
+      <div class="lens__divider" aria-hidden="true"><span>↔</span></div>
+    </div>
+    <p class="lens__limits" id="material-lens-limits">Авторские рисунки без масштаба: цвет, размер и форма элементов условны. Они показывают различие структур, а не внешний вид конкретного образца.</p>
+  </figure>
+  <div class="lens__control" data-lens-controls hidden>
+    <div class="lens__control-heading"><label for="material-lens-control">Доля схемы нефрита</label><output data-lens-value for="material-lens-control" aria-live="off">Нефрит 50% · Жадеит 50%</output></div>
+    <input id="material-lens-control" type="range" min="0" max="100" step="1" value="50" aria-describedby="material-lens-help material-lens-limits" aria-valuetext="Область схемы: нефрит 50%, жадеит 50%" />
+    <p id="material-lens-help">Сдвиньте границу ползунком или клавишами ← →. Проценты означают только видимую область рисунка — не состав камня.</p>
   </div>
   <div class="comparison" role="region" aria-label="Сравнение нефрита и жадеита" tabindex="0">
     <table>
@@ -37,45 +102,57 @@ const rows = [
 </material-lens>
 
 <script>
-  import { clampLens } from '../lib/explorers';
+  import { bindMaterialLens } from '../lib/material-lens';
 
   class MaterialLens extends HTMLElement {
+    private cleanup?: () => void;
+
     connectedCallback() {
-      const input = this.querySelector<HTMLInputElement>('input[type="range"]');
-      if (!input) return;
-      const update = () => {
-        const value = clampLens(Number(input.value));
-        this.style.setProperty('--lens', `${value}%`);
-        input.setAttribute('aria-valuetext', `${value}% нефрит, ${100 - value}% жадеит`);
-      };
-      input.addEventListener('input', update);
-      update();
+      this.cleanup?.();
+      this.cleanup = bindMaterialLens(this);
+    }
+
+    disconnectedCallback() {
+      this.cleanup?.();
     }
   }
-  customElements.define('material-lens', MaterialLens);
+  if (!customElements.get('material-lens')) customElements.define('material-lens', MaterialLens);
 </script>
 
 <style>
-  .lens { display: block; }
-  .lens__visual { position: relative; height: min(65vw, 39rem); min-height: 25rem; overflow: hidden; border: 1px solid var(--line); background: var(--jade-deep); }
-  .lens__visual > img, .lens__jadeite, .lens__jadeite img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-  .lens__visual > img { filter: saturate(.72) brightness(.7); }
+  .lens { display: block; min-width: 0; }
+  .lens__figure { margin: 0; background: var(--paper); color: var(--ink); }
+  .lens__notice { margin: 0; padding: 1rem 1.5rem; border-bottom: 1px solid rgba(7,17,15,.16); font-size: .67rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+  .lens__key { display: grid; grid-template-columns: 1fr 1fr; }
+  .lens__key > div { min-width: 0; padding: 1.5rem; }
+  .lens__key > div + div { border-left: 1px solid rgba(7,17,15,.16); }
+  .lens__key span { color: var(--jade-deep); font-size: .68rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+  .lens__key h3 { margin: .4rem 0; font-family: var(--serif); font-size: clamp(1.2rem,2.2vw,1.9rem); font-weight: 400; line-height: 1.2; }
+  .lens__key p { max-width: 42ch; margin: .7rem 0 0; color: rgba(7,17,15,.75); font-size: .85rem; line-height: 1.6; }
+  .lens__visual { position: relative; height: clamp(19rem,40vw,32rem); overflow: hidden; background: var(--jade-deep); }
+  .lens__diagram { position: absolute; inset: 0; width: 100%; height: 100%; }
   .lens__jadeite { clip-path: inset(0 0 0 var(--lens)); }
-  .lens__jadeite img { filter: hue-rotate(28deg) saturate(1.4) contrast(1.15) brightness(.82); transform: scaleX(-1); }
-  .lens__divider { position: absolute; top: 0; bottom: 0; left: var(--lens); width: 1px; background: var(--paper); box-shadow: 0 0 1.5rem rgba(238,232,217,.8); }
-  .lens__divider::after { position: absolute; top: 50%; left: 50%; display: grid; width: 3.2rem; height: 3.2rem; place-items: center; border: 1px solid var(--paper); border-radius: 50%; content: '↔'; color: var(--ink); background: var(--paper); transform: translate(-50%,-50%); }
-  .lens__label { position: absolute; bottom: 1.2rem; padding: .5rem .7rem; color: var(--ink); background: rgba(238,232,217,.85); font-size: .65rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
-  .lens__label--left { left: 1.2rem; } .lens__label--right { right: 1.2rem; }
-  .lens__control { display: grid; padding: 1.5rem 0 3rem; grid-template-columns: auto minmax(12rem,1fr) auto; gap: 1.5rem; align-items: center; }
-  .lens__control label { font-weight: 700; }
-  .lens__control input { width: 100%; accent-color: var(--jade); }
-  .lens__control p { max-width: 28ch; color: rgba(220,232,223,.52); font-size: .68rem; }
-  .comparison { overflow-x: auto; }
+  .lens__divider { position: absolute; top: 0; bottom: 0; left: var(--lens); width: 2px; background: var(--paper); pointer-events: none; }
+  .lens__divider span { position: absolute; top: 50%; left: 50%; display: none; width: 2.8rem; height: 2.8rem; place-items: center; border: 1px solid var(--ink); border-radius: 50%; color: var(--ink); background: var(--paper); transform: translate(-50%,-50%); }
+  .lens[data-enhanced] .lens__divider span { display: grid; }
+  .lens__limits { margin: 0; padding: 1rem 1.5rem; color: rgba(7,17,15,.75); font-size: .75rem; line-height: 1.6; }
+  .lens__control { display: grid; padding: 1.5rem; gap: .7rem; border: 1px solid var(--line); border-top: 0; }
+  .lens__control[hidden] { display: none; }
+  .lens__control-heading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .5rem 1.5rem; align-items: baseline; }
+  .lens__control label { color: var(--paper); font-size: .9rem; font-weight: 700; }
+  .lens__control output { color: var(--jade-bright); font-size: .8rem; font-variant-numeric: tabular-nums; }
+  .lens__control input { width: 100%; min-height: 2.75rem; margin: 0; accent-color: var(--jade-bright); cursor: ew-resize; }
+  .lens__control p { margin: 0; color: rgba(220,232,223,.72); font-size: .75rem; }
+  .comparison { margin-top: 2.5rem; overflow-x: auto; }
   table { width: 100%; min-width: 48rem; border-collapse: collapse; }
   th, td { padding: 1.3rem; border: 1px solid var(--line); text-align: left; vertical-align: top; }
   thead th { color: var(--paper); font-family: var(--serif); font-size: 1.3rem; font-weight: 400; }
   thead th:not(:first-child) { color: var(--jade-bright); }
   tbody th { width: 18%; color: rgba(220,232,223,.52); font-size: .68rem; letter-spacing: .08em; text-transform: uppercase; }
   tbody td { color: rgba(220,232,223,.75); }
-  @media (max-width: 760px) { .lens__control { grid-template-columns: 1fr; } .lens__visual { min-height: 20rem; } }
+  @media (max-width: 760px) {
+    .lens__key > div { padding: 1rem; }
+    .lens__notice, .lens__limits, .lens__control { padding: 1rem; }
+    .lens__key p { font-size: .75rem; }
+  }
 </style>

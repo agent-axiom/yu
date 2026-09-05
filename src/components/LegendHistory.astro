@@ -1,0 +1,238 @@
+---
+const witnesses = [
+  {
+    id: 'hanfeizi',
+    date: 'III век до н. э.*',
+    author: '«Хань Фэй-цзы»',
+    kind: 'Философская притча',
+    reference: 'Глава 13 · «Хэ Ши»',
+    title: 'Ценность, которую не распознали',
+    storyTime: 'Древнее Чу: правления Ли, У и Вэня',
+    textTime: 'Поздняя эпоха Сражающихся царств',
+    datingNote: '*Традиционная датировка корпуса, приписываемого Хань Фэю (ок. 280–233 до н. э.), а не точный год записи этой главы.',
+    datingSource: { label: 'Атрибуция корпуса · Библиотека Конгресса', url: 'https://www.loc.gov/item/2021666503/' },
+    story: 'Герой находит в горах Чу необработанный камень. Два правителя доверяют оценке мастеров: это лишь камень. За мнимый обман Хэ лишают обеих стоп. При третьем правителе мастер обрабатывает находку и обнаруживает драгоценный материал. Имя человека становится именем сокровища.',
+    reading: 'После рассказа глава переходит к опасностям политического совета. Мы читаем здесь не просто награду за честность: даже ценное предложение может быть отвергнуто, а его автор — наказан.',
+    boundary: 'Это свидетельство о рассказе и его политическом смысле. Оно не устанавливает место находки или минералогический состав конкретного предмета.',
+    sources: [
+      { label: '«Хань Фэй-цзы», 13 · китайский текст', url: 'https://ctext.org/hanfeizi/he-shi/zh' },
+      { label: 'Сверка сюжета · словарь Министерства образования Тайваня', url: 'https://dict.revised.moe.edu.tw/dictView.jsp?ID=79298&q=1&word=%E5%92%8C' },
+    ],
+  },
+  {
+    id: 'shiji',
+    date: 'Рубеж II–I веков до н. э.',
+    author: '«Ши цзи»',
+    kind: 'Историческое повествование',
+    reference: 'Глава 81 · Лянь По и Линь Сянжу',
+    title: 'Сокровище между двумя царствами',
+    storyTime: 'Эпоха Сражающихся царств: Чжао и Цинь',
+    textTime: 'Рубеж II–I веков до н. э.',
+    datingNote: 'Время создания «Ши цзи» Сыма Цяня — около 100 года до н. э. Описанное посольство относится к более раннему времени.',
+    datingSource: { label: 'Датировка труда · Oxford History of Historical Writing', url: 'https://academic.oup.com/book/9284/chapter-abstract/156027551' },
+    story: 'Царь Цинь предлагает Чжао пятнадцать городов за драгоценный диск Хэ Ши. Посол Линь Сянжу замечает, что обещанию нельзя доверять. Он возвращает камень себе под предлогом показать изъян, добивается отсрочки и тайно отправляет его обратно в Чжао.',
+    reading: 'Теперь драгоценность уже признана всеми. В нашем сопоставлении вопрос меняется: не как увидеть ценность, а как сохранить её перед лицом превосходящей силы. На первый план выходит посол.',
+    boundary: 'Это другой эпизод о драгоценности с тем же именем, а не повтор находки Бянь Хэ. Совпадение имени не даёт непрерывной, проверенной истории самого камня.',
+    sources: [
+      { label: '«Ши цзи», 81 · китайский текст', url: 'https://ctext.org/shiji/lian-po-lin-xiang-ru-lie-zhuan/zhs' },
+      { label: 'Сюжет «Вернуть диск в Чжао» · Министерство образования Тайваня', url: 'https://dict.idioms.moe.edu.tw/idiomView.jsp?ID=-341&la=0&webMd=1' },
+    ],
+  },
+  {
+    id: 'retelling',
+    date: '2 марта 2015',
+    author: 'China Culture',
+    kind: 'Современный пересказ',
+    reference: 'Nine tales about Chinese jade · He Shi Bi',
+    title: 'История становится уроком честности',
+    storyTime: 'Снова древнее Чу, не 2015 год',
+    textTime: '2 марта 2015 года',
+    datingNote: 'Дата публикации этой версии на культурном портале. Она не датирует происхождение легенды.',
+    datingSource: { label: 'Дата и текст · China Culture', url: 'https://en.chinaculture.org/2015-03/02/content_603183_4.htm' },
+    story: 'Культурный портал возвращается к Бянь Хэ: дважды отвергнутый камень наконец раскрывает свою ценность. В финале имя драгоценности объясняется честностью героя. Рядом даётся краткое пояснение формы диска bi.',
+    reading: 'В сравнении с главой «Хань Фэй-цзы» здесь исчезает последующее рассуждение об опасности реформ. В центре короткого пересказа остаётся понятная современному читателю нравственная история.',
+    boundary: 'Современная публикация показывает, как легенду рассказывают сегодня. Она не является независимым подтверждением событий древнего Чу.',
+    sources: [
+      { label: 'China Culture · пересказ 2015 года', url: 'https://en.chinaculture.org/2015-03/02/content_603183_4.htm' },
+    ],
+  },
+];
+---
+
+<section id="legend-history" class="legend-section section page-shell section-rule" aria-labelledby="legend-history-title">
+  <header class="dossier-heading">
+    <div>
+      <p class="eyebrow">История легенды · досье 01</p>
+      <h2 id="legend-history-title" class="title">Имя одно.<br />Историй несколько.</h2>
+    </div>
+    <p>Хэ Ши би — <span lang="zh">和氏璧</span>. Проследим, как меняется роль драгоценности в текстах. Перед нами история рассказов, не установленная биография камня.</p>
+  </header>
+
+  <legend-history class="dossier">
+    <div class="witness-guide">
+      <p>Три текстовых свидетельства</p>
+      <span>Слева направо — время текста, не событий</span>
+    </div>
+    <div class="witness-controls" data-witness-controls hidden aria-label="Текстовые свидетельства о Хэ Ши би">
+      {witnesses.map((witness, index) => (
+        <button
+          type="button"
+          id={`witness-${witness.id}-tab`}
+          aria-controls={`witness-${witness.id}-panel`}
+          data-witness-tab={witness.id}
+        >
+          <span class="witness-control__number" aria-hidden="true">0{index + 1}</span>
+          <span class="witness-control__date">{witness.date}</span>
+          <span class="witness-control__author">{witness.author}</span>
+        </button>
+      ))}
+    </div>
+
+    <div class="witness-pages">
+      {witnesses.map((witness, index) => (
+        <article
+          class="witness-page"
+          id={`witness-${witness.id}-panel`}
+          aria-labelledby={`witness-${witness.id}-title`}
+          data-witness-panel={witness.id}
+        >
+          <aside class="witness-margin" aria-label="Сведения о тексте">
+            <span class="folio" aria-hidden="true">0{index + 1}<small> / 03</small></span>
+            <p class="witness-kind">{witness.kind}</p>
+            <p class="witness-author">{witness.author}</p>
+            <p class="witness-reference">{witness.reference}</p>
+            <span class="name-mark" lang="zh" aria-hidden="true">和氏璧</span>
+            <p class="margin-note">Имя в литературе.<br />Не портрет предмета.</p>
+          </aside>
+
+          <div class="witness-body">
+            <div class="witness-clocks">
+              <div><span class="clock-label">Время внутри сюжета</span><p>{witness.storyTime}</p></div>
+              <div><span class="clock-label">Время текста</span><p>{witness.textTime}</p></div>
+            </div>
+            <h3 id={`witness-${witness.id}-title`}>{witness.title}</h3>
+            <p class="witness-story">{witness.story}</p>
+            <div class="witness-reading">
+              <h4>Что меняется · наше прочтение</h4>
+              <p>{witness.reading}</p>
+            </div>
+            <div class="witness-boundary">
+              <h4>Предел свидетельства</h4>
+              <p>{witness.boundary}</p>
+            </div>
+            <footer class="witness-sources">
+              <p class="source-label">Источники пересказа</p>
+              <ul>{witness.sources.map((source) => <li><a href={source.url}>{source.label} <span aria-hidden="true">↗</span></a></li>)}</ul>
+              <p class="dating-note">{witness.datingNote} <a href={witness.datingSource.url}>{witness.datingSource.label} <span aria-hidden="true">↗</span></a></p>
+            </footer>
+          </div>
+        </article>
+      ))}
+    </div>
+
+    <footer class="dossier-colophon">
+      <span>Граница знания</span>
+      <p>Тексты позволяют сравнить сюжеты, но не отождествить Хэ Ши би с сохранившимся камнем. Его превращение в императорскую печать здесь не принимается за установленный факт. Все пересказы — редакторские, не цитаты.</p>
+    </footer>
+  </legend-history>
+</section>
+
+<script>
+  import { enhanceLegendHistory } from '../lib/legend-history';
+
+  class LegendHistory extends HTMLElement {
+    private cleanup?: () => void;
+
+    connectedCallback() {
+      this.cleanup?.();
+      this.cleanup = enhanceLegendHistory(this);
+    }
+
+    disconnectedCallback() {
+      this.cleanup?.();
+    }
+  }
+
+  if (!customElements.get('legend-history')) customElements.define('legend-history', LegendHistory);
+</script>
+
+<style>
+  .legend-section { scroll-margin-top: 2rem; }
+  .dossier-heading { display: grid; grid-template-columns: 1.05fr .95fr; align-items: end; gap: clamp(2rem, 6vw, 6rem); margin-bottom: 3rem; }
+  .dossier-heading > p { max-width: 45ch; margin: 0; color: var(--mist); font-family: var(--serif); font-size: var(--step-1); line-height: 1.6; }
+  .dossier { display: block; border: 1px solid var(--line); }
+  .witness-guide { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; padding: 1.15rem 1.5rem; background: var(--ink-soft); }
+  .witness-guide p { margin: 0; color: var(--paper); font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+  .witness-guide > span { color: var(--mist); font-size: .72rem; }
+  .witness-controls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--line); background: var(--ink-soft); }
+  .witness-controls[hidden], .witness-page[hidden] { display: none; }
+  .witness-controls button { position: relative; display: grid; min-height: 8rem; grid-template-columns: 2rem 1fr; gap: .25rem .6rem; align-content: center; padding: 1.2rem 1.5rem; border: 0; border-right: 1px solid var(--line); color: var(--mist); background: transparent; text-align: left; cursor: pointer; }
+  .witness-controls button:last-child { border-right: 0; }
+  .witness-controls button[aria-selected='true'] { color: #163b31; background: var(--paper); }
+  .witness-controls button[aria-selected='true']::after { position: absolute; top: 0; left: 0; right: 0; height: 3px; background: #996846; content: ''; }
+  .witness-controls button:focus-visible { z-index: 1; outline-offset: -6px; }
+  .witness-control__number { grid-row: span 2; font-family: var(--serif); font-size: 1.25rem; }
+  .witness-control__date { font-size: .88rem; font-weight: 700; line-height: 1.4; }
+  .witness-control__author { font-size: .74rem; }
+  .witness-pages { background: var(--paper); color: #273b32; }
+  .witness-page { display: grid; grid-template-columns: minmax(12rem, .7fr) minmax(0, 2.3fr); border-bottom: 1px solid #bac0ac; }
+  .witness-page:focus-visible { outline-color: #754d30; outline-offset: -5px; }
+  .witness-margin { display: flex; flex-direction: column; align-items: flex-start; padding: clamp(1.5rem, 3vw, 3rem); border-right: 1px solid #c7c6b6; background: linear-gradient(90deg, #dcdac9, transparent 1rem); }
+  .folio { margin-bottom: 2rem; color: #517060; font-family: var(--serif); font-size: 4rem; line-height: 1; }
+  .folio small { font-family: var(--sans); font-size: .7rem; }
+  .witness-kind { margin: 0 0 .8rem; color: #785235; font-size: .66rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+  .witness-author { margin: 0 0 .65rem; color: #163b31; font-family: var(--serif); font-size: 1.35rem; line-height: 1.5; }
+  .witness-reference { margin: 0; color: #4b5d50; font-size: .76rem; line-height: 1.65; overflow-wrap: anywhere; }
+  .name-mark { margin: 3rem 0 1rem; padding: .3rem .6rem; border: 1px solid #9b6650; color: #8b5944; font-family: serif; font-size: 2.3rem; line-height: 1.5; writing-mode: vertical-rl; }
+  .margin-note { margin: 0; color: #586453; font-size: .66rem; line-height: 1.6; }
+  .witness-body { min-width: 0; padding: clamp(1.5rem, 4vw, 4rem); }
+  .witness-clocks { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; padding-bottom: 1.5rem; border-bottom: 1px solid #b7bcaa; }
+  .witness-clocks > div:last-child { padding-left: 1.5rem; border-left: 1px solid #b7bcaa; }
+  .clock-label { color: #71513a; font-size: .65rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+  .witness-clocks p { margin: .4rem 0 0; color: #263d32; font-size: .8rem; line-height: 1.6; }
+  .witness-body h3 { max-width: 23ch; margin: 2rem 0 1.4rem; color: #163b31; font-family: var(--serif); font-size: clamp(1.8rem, 3vw, 2.65rem); font-weight: 400; line-height: 1.2; letter-spacing: -.02em; }
+  .witness-story { max-width: 65ch; margin: 0 0 2rem; color: #263b31; font-family: var(--serif); font-size: clamp(1.05rem, 1.3vw, 1.3rem); line-height: 1.8; }
+  .witness-reading { margin-bottom: 1.5rem; padding-left: 1.25rem; border-left: 2px solid #6b8872; }
+  .witness-body h4 { margin: 0 0 .5rem; color: #355a45; font-size: .65rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+  .witness-reading p, .witness-boundary p { margin: 0; font-size: .85rem; line-height: 1.75; }
+  .witness-boundary { padding: 1.25rem; background: #e2dfce; }
+  .witness-boundary h4 { color: #785235; }
+  .witness-sources { margin-top: 2rem; border-top: 1px solid #b7bcaa; padding-top: 1rem; font-size: .7rem; line-height: 1.65; }
+  .source-label { margin: 0 0 .4rem; color: #355a45; font-size: .65rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
+  .witness-sources ul { display: grid; gap: .35rem; margin: 0; padding: 0; list-style: none; }
+  .witness-sources a { color: #315942; text-decoration-color: #8b9c84; }
+  .witness-sources a:hover { color: #132f21; text-decoration-color: currentColor; }
+  .witness-sources a:focus-visible { outline-color: #754d30; }
+  .dating-note { margin: 1rem 0 0; color: #586453; }
+  .dating-note a { display: inline; }
+  .dossier-colophon { display: grid; grid-template-columns: minmax(9rem, .7fr) minmax(0, 2.3fr); gap: 2rem; padding: 1.5rem clamp(1.5rem, 3vw, 3rem); color: var(--mist); background: var(--ink-soft); }
+  .dossier-colophon > span { color: var(--amber); font-size: .65rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+  .dossier-colophon p { max-width: 85ch; margin: 0; font-size: .74rem; line-height: 1.75; }
+  @media (max-width: 900px) {
+    .dossier-heading { grid-template-columns: 1fr; }
+    .dossier-heading > p { max-width: 60ch; }
+    .witness-controls button { grid-template-columns: 1fr; padding: 1rem; }
+    .witness-control__number { display: none; }
+    .witness-page { grid-template-columns: minmax(9rem, .6fr) minmax(0, 2fr); }
+    .witness-margin { padding: 1.5rem; }
+  }
+  @media (max-width: 620px) {
+    .witness-guide { display: block; padding-inline: 1rem; }
+    .witness-guide > span { display: block; margin-top: .3rem; }
+    .witness-controls button { min-height: 7.5rem; padding: 1rem .65rem; }
+    .witness-control__date { font-size: .7rem; }
+    .witness-control__author { font-size: .64rem; }
+    .witness-page { grid-template-columns: 1fr; }
+    .witness-margin { display: grid; grid-template-columns: auto 1fr; column-gap: 1rem; padding: 1.5rem; border-right: 0; border-bottom: 1px solid #c7c6b6; }
+    .folio { grid-row: span 3; align-self: center; margin: 0; font-size: 2.5rem; }
+    .witness-kind, .witness-author, .witness-reference { grid-column: 2; }
+    .witness-kind { margin-bottom: .4rem; font-size: .6rem; }
+    .witness-author { margin-bottom: .3rem; font-size: 1.15rem; }
+    .name-mark, .margin-note { display: none; }
+    .witness-clocks { gap: .85rem; }
+    .witness-clocks > div:last-child { padding-left: .85rem; }
+    .clock-label { font-size: .59rem; }
+    .witness-clocks p { font-size: .73rem; }
+    .dossier-colophon { grid-template-columns: 1fr; gap: .6rem; }
+  }
+</style>

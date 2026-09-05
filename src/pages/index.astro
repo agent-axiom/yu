@@ -35,6 +35,17 @@ const firstMedical = medicine.find(({ id }) => id === '01-healing-energy') ?? me
     </div>
   </section>
 
+  <section class="section experience-gateway section-rule" aria-labelledby="experience-title">
+    <div class="page-shell experience-layout">
+      <div class="experience-intro"><p class="eyebrow">Три способа увидеть больше</p><h2 id="experience-title" class="title">Не только читать.<br /><em>Исследовать.</em></h2><p>Приблизьте предмет. Сопоставьте версии. Загляните внутрь материала.</p><span class="experience-mark" aria-hidden="true">玉</span></div>
+      <nav class="experience-links" aria-label="Интерактивные исследования">
+        <a href={withBase('/history/#object-biography')}><span class="experience-number">01</span><div><span class="experience-kind">Кабинет предмета</span><h3>Один диск. Пять жизней.</h3><p>Музейный снимок с увеличением, биография и честно обозначенные пробелы.</p><span class="experience-action">Рассмотреть ближе <span aria-hidden="true">↗</span></span></div></a>
+        <a href={withBase('/mythology/#legend-history')}><span class="experience-number">02</span><div><span class="experience-kind">Архив легенды</span><h3>Как меняется Хэшиби?</h3><p>Когда происходит история — и когда о ней рассказывают? Сравните свидетельства.</p><span class="experience-action">Открыть досье <span aria-hidden="true">↗</span></span></div></a>
+        <a href={withBase('/material/#material-lens')}><span class="experience-number">03</span><div><span class="experience-kind">Минералогическая линза</span><h3>Волокна или зёрна?</h3><p>Две учебные модели покажут, почему похожие камни устроены по-разному.</p><span class="experience-action">Сдвинуть границу <span aria-hidden="true">↗</span></span></div></a>
+      </nav>
+    </div>
+  </section>
+
   <section id="routes" class="section page-shell section-rule" aria-labelledby="routes-title">
     <p class="eyebrow">Четыре маршрута</p>
     <h2 id="routes-title" class="title reveal">Выберите глубину погружения</h2>
@@ -88,12 +99,27 @@ const firstMedical = medicine.find(({ id }) => id === '01-healing-energy') ?? me
   <aside class="method-callout page-shell reveal">
     <p class="eyebrow">Как читать YU</p>
     <p>Каждое ключевое утверждение связано с источником. Легенда остаётся легендой, интерпретация — интерпретацией, а медицинская гипотеза получает явный уровень доказательности.</p>
-    <a href={withBase('/sources/')}>Открыть 23 источника и методологию <span aria-hidden="true">↗</span></a>
+    <a href={withBase('/sources/')}>Открыть источники и методологию <span aria-hidden="true">↗</span></a>
   </aside>
 </BaseLayout>
 
 <style>
   .definition { background: radial-gradient(circle at 18% 45%, rgba(143,203,165,.08), transparent 25rem); }
+  .experience-gateway { background: #0c231c; }
+  .experience-layout { display: grid; grid-template-columns: 1fr 1fr; gap: clamp(3rem,8vw,8rem); }
+  .experience-intro .title { font-size: clamp(2.5rem,4.8vw,4.7rem); }
+  .experience-intro em { color: var(--jade); font-style: normal; }
+  .experience-intro > p:not(.eyebrow) { max-width: 33ch; margin-top: 2rem; color: #a2b7a9; }
+  .experience-mark { display: block; width: fit-content; margin-top: 2rem; color: #749a80; font-family: var(--serif); font-size: 6rem; line-height: 1.1; }
+  .experience-links > a { display: grid; grid-template-columns: 2.5rem 1fr; gap: 1.2rem; padding: 1.8rem 0; border-top: 1px solid #496450; text-decoration: none; }
+  .experience-links > a:last-child { border-bottom: 1px solid #496450; }
+  .experience-number { color: #81a78e; font-family: var(--serif); font-size: 1.2rem; }
+  .experience-kind { color: var(--amber); font-size: .62rem; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+  .experience-links h3 { margin: .5rem 0; color: var(--paper); font-family: var(--serif); font-size: clamp(1.35rem,2vw,1.9rem); font-weight: 400; line-height: 1.3; }
+  .experience-links p { max-width: 42ch; margin: .7rem 0; color: #a2b7a9; font-size: .82rem; }
+  .experience-action { display: inline-flex; gap: 1rem; margin-top: .5rem; color: var(--jade); font-size: .7rem; font-weight: 700; }
+  .experience-action > span { transition: transform .2s; }
+  .experience-links > a:hover .experience-action > span { transform: translate(3px,-3px); }
   .route-grid { margin-top: 3rem; grid-template-columns: repeat(4, minmax(0,1fr)); }
   .history-preview { background: linear-gradient(180deg, var(--ink), #0a201a 50%, var(--ink)); }
   .preview-head { display: grid; margin-bottom: 4rem; grid-template-columns: 1.2fr .8fr; gap: 4rem; }
@@ -120,5 +146,5 @@ const firstMedical = medicine.find(({ id }) => id === '01-healing-energy') ?? me
   .method-callout p { margin: 0; }
   .method-callout > a { color: var(--jade); font-size: .8rem; font-weight: 700; }
   @media (max-width: 1000px) { .route-grid { grid-template-columns: 1fr 1fr; } }
-  @media (max-width: 700px) { .route-grid, .preview-head, .era-ribbon, .material-preview, .evidence-preview, .method-callout { grid-template-columns: 1fr; } .era-ribbon li { min-height: auto; border-bottom: 1px solid var(--line); } .myth-preview { min-height: 43rem; } }
+  @media (max-width: 700px) { .experience-layout, .route-grid, .preview-head, .era-ribbon, .material-preview, .evidence-preview, .method-callout { grid-template-columns: 1fr; } .experience-mark { display: none; } .era-ribbon li { min-height: auto; border-bottom: 1px solid var(--line); } .myth-preview { min-height: 43rem; } }
 </style>

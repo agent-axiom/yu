@@ -1,6 +1,7 @@
 ---
 import { getCollection } from 'astro:content';
 import HistoryTimeline from '../components/HistoryTimeline.astro';
+import ObjectBiography from '../components/ObjectBiography.astro';
 import SourceRef from '../components/SourceRef.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import { withBase } from '../lib/urls';
@@ -18,6 +19,8 @@ const metMaya = sourceMap.get('met-maya-2026');
     <h1 class="display">Камень как мера времени</h1>
     <p class="lede">Археология показывает предметы, технологии и контекст находки. Значение приходится реконструировать осторожнее: даже там, где ритуальная роль вероятна, точный смысл формы мог меняться и остаётся предметом дискуссии.</p>
   </header>
+
+  <ObjectBiography />
 
   <section class="section page-shell section-rule" aria-labelledby="timeline-title">
     <div class="timeline-intro reveal"><div><p class="eyebrow">Хронология</p><h2 id="timeline-title" class="title">Восемь поворотных эпох</h2></div><p>Выберите точку на шкале. В каждой панели факты отделены от интерпретации, а маркеры открывают точные публикации.</p></div>
